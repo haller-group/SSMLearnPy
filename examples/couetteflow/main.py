@@ -1,13 +1,13 @@
 from scipy.io import loadmat
 from ssmlearnpy import SSMLearn
-from ssmlearnpy.reduced_dynamics.reduced_dynamics import advect
+from ssmlearnpy.reduced_dynamics.advector import advect
 import numpy as np
 import matplotlib.pyplot as plt
 
 
 
 mat = loadmat('dataRe135.mat')
-n_traj = 2
+n_traj = len(mat['aData'])
 
 t_full = [mat['aData'][i][0].flatten() for i in range(n_traj)]
 x_full = [mat['aData'][i][1] for i in range(n_traj)]
