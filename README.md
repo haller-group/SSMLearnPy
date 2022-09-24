@@ -1,6 +1,6 @@
 <img src="docs/images/SSMLearnLogo.png" width="350" align="right">
 
-<h1 style="font-family:Helvetica;" align="center">
+<h1 style="font-family:Helvetica;" align="left">
     SSMLearnPy
 </h1>
 
