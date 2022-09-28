@@ -27,20 +27,21 @@ def finite_time_differences(
         half_width = 4
 
     # Coefficients for the numerical derivative
-    coeff_mat = np.array([[1/2,   2/3,   3/4,    4/5], [0, -1/12, -3/20   -1/5], [0,     0,  1/60,  4/105], [0,     0,     0, -1/280]])
+    coeff_mat = np.array([[1/2, 2/3, 3/4, 4/5], [0, -1/12, -3/20, -1/5], [0, 0, 1/60, 4/105], [0, 0, 0, -1/280]], dtype=float)
 
     # Computation of the finite differences
     n_instances = x_in.shape[1]
-    base_interval = range(half_width, n_instances-half_width)
-    x = x_in[:, base_interval]
+    base_int = range(half_width, n_instances-half_width)
+    x = x_in[:, base_int]
     dx = np.zeros(x.shape)
-    for ii in range(half_width):
-        dx = dx + coeff_mat[ii, half_width] * (x_i[n:, base_int+ii] - x_in[:, base_int-ii]);
-    if len(t) == 1:
-        dx_dt = dx/t
+    for idx in range(1,half_width+1):
+        base_int_p = range(half_width+idx, n_instances-half_width+idx)
+        base_int_m = range(half_width-idx, n_instances-half_width-idx)
+        dx = dx + coeff_mat[idx-1, half_width-1] * (x_in[:, base_int_p] - x_in[:, base_int_m])
+    if np.isscalar(t_in) == True:
+        dx_dt, t = dx/t_in, t_in
     else:
-        t = t_in[base_interval]
+        t = t_in[base_int]
         dx_dt = dx/(t[1]-t[0])
-
 
     return dx_dt, x, t

@@ -1,5 +1,3 @@
-import numpy as np
-
 def function_to_list(
     fun, 
     x_in

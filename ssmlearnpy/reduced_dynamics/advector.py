@@ -18,10 +18,14 @@ class TimeStepper:
 
     def advect(self, timespan, x0, **integration_args):
         if self.type == 'flow':
+            l_x0 = len(x0)
+            def vector_field(t,x):
+                dx_dt = self.dynamics(x.reshape(1,l_x0))
+                return dx_dt
             if len(timespan) == 2:
-                sol = solve_ivp(self.dynamics, timespan, x0, **integration_args)
+                sol = solve_ivp(vector_field, timespan, x0, **integration_args)
             else:
-                sol = solve_ivp(self.dynamics, [timespan[0], timespan[-1]], x0, t_eval = timespan, **integration_args)
+                sol = solve_ivp(vector_field, [timespan[0], timespan[-1]], x0, t_eval = timespan, **integration_args)
             return sol.t, sol.y, sol.success
         if self.type == 'map':
             success = True
