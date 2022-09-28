@@ -23,21 +23,28 @@ We have included a demonstration of SSM computation over the following examples.
 - Couette flow: data from CFD simulations, projected on a low-dimensional linear subspace of the phase space, for different regimes.
 
 ## Installation
-1. (optional) Create a new conda environment and activate it:
+1. Clone the project with 
+    ```sh
+    git clone git@github.com:mattiacenedese/SSMLearnPy.git
+    ```
+2. Enter in the project folder 
+    ```sh
+    cd SSMLearnPy/
+    ```
+3. (optional) Create a new conda environment and activate it:
     ```sh
     conda create -n ssmlearn python=3.9
     conda activate ssmlearn
     ```
-
-2. Install dependencies:
+4. Install dependencies:
     ```sh
     pip install -r requirements.txt
     ```
-3. Install the package:
+5. Install the package:
     ```sh
-    pip install ssmlearnpy
+    pip install -e .
     ```
-3. You are ready.
+6. You are ready.
 
 ## References
 Please consider to cite this article when using this code:

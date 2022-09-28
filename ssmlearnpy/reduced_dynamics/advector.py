@@ -39,8 +39,8 @@ class TimeStepper:
             return time_at_iterations, sol, success
 
 
-def advect(dynamics, t, x, type,  **integration_args):
-    time_stepper = TimeStepper(type, dynamics, t[0][1] - t[0][0])
+def advect(dynamics, t, x, dynamics_type,  **integration_args):
+    time_stepper = TimeStepper(dynamics_type, dynamics, t[0][1] - t[0][0])
     x_predict,  t_predict = [], []
     for i_traj in range(len(x)):
         t_traj, x_traj, success_traj = time_stepper.advect(t[i_traj], x[i_traj][:,0], **integration_args)
