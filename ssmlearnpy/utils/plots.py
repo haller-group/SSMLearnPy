@@ -93,7 +93,6 @@ def plot_xyz(
     """
     fig = go.Figure()
     x_max, x_min, y_max, y_min, z_max, z_min = 0, 0, 0, 0, 0, 0
-    
     plt_font_color = '#101010'
     if add_surface == True:
         line_marker1 = dict(color=plt_font_color, width=2)
@@ -102,9 +101,9 @@ def plot_xyz(
         x=surface_dict['x_mesh'],
         y=surface_dict['y_mesh'],
         z=surface_dict['z_mesh'],
-        surfacecolor=surface_dict['surf_coloring'],
+        surfacecolor=np.square(surface_dict['c_mesh']),
         opacity = 0.7,
-        colorscale=surface_dict['colorscale'],
+        colorscale= 'agsunset', # surface_dict['colorscale'],
         showscale=False,
         showlegend=False
         )
@@ -162,3 +161,37 @@ def plot_xyz(
     )
 
     return fig
+
+def compute_surface(
+    surface_function = [],
+    idx_reduced_coordinates = [1, 2],
+    transf_mesh_generation = 0,
+    idx_observables = [1],
+    mesh_step = 100
+    ):
+
+    r_vec = np.linspace(0, 1, mesh_step + 1)
+    th_vec = np.linspace(0, 2*np.pi, mesh_step + 1)
+    r_mesh, th_mesh = np.meshgrid(r_vec,th_vec)
+    x_mesh, y_mesh = r_mesh*np.cos(th_mesh), r_mesh*np.sin(th_mesh)
+    x_data = np.array([x_mesh.flatten(), y_mesh.flatten(),])
+    x_reduced_surf = np.matmul(transf_mesh_generation,x_data)
+    x_full_surf = surface_function(x_reduced_surf.T).T
+
+    if len(idx_observables) == 1:
+        x_vec = x_reduced_surf[idx_reduced_coordinates[0]-1,:]
+        y_vec = x_reduced_surf[idx_reduced_coordinates[1]-1,:]
+        z_vec = x_full_surf[idx_observables[0]-1,:]
+    
+    if len(idx_observables) == 3:
+        x_vec = x_full_surf[idx_observables[0]-1,:]
+        y_vec = x_full_surf[idx_observables[1]-1,:]
+        z_vec = x_full_surf[idx_observables[2]-1,:]
+
+    surface_dict = {}
+    surface_dict['x_mesh'] = x_vec.reshape(r_mesh.shape)
+    surface_dict['y_mesh'] = y_vec.reshape(r_mesh.shape)
+    surface_dict['z_mesh'] = z_vec.reshape(r_mesh.shape)
+    surface_dict['c_mesh'] = r_mesh/np.amax(r_mesh)
+
+    return surface_dict   

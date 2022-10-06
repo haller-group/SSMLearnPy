@@ -13,9 +13,11 @@ from ssmlearnpy.reduced_dynamics.advector import advect
 
 from ssmlearnpy.utils.compute_errors import compute_errors
 from ssmlearnpy.utils.ridge import get_fit_ridge
+from ssmlearnpy.utils.ridge import get_matrix
 from ssmlearnpy.utils.file_handler import get_vectors
 from ssmlearnpy.utils.plots import plot_xy
 from ssmlearnpy.utils.plots import plot_xyz
+from ssmlearnpy.utils.plots import compute_surface
 
 logger = logging.getLogger("SSMLearn")
 
@@ -97,6 +99,7 @@ class SSMLearn:
         self.geometry_predictions = {}
         self.reduced_dynamics_predictions = {}
         self.predictions = {}
+        self.ssm_dim = ssm_dim
 
     @staticmethod
     def import_data(path):
@@ -132,6 +135,36 @@ class SSMLearn:
             self.emb_data['observables'],
             **regression_args
         )
+
+    def get_surface(
+        self,
+        idx_reduced_coordinates = [1, 2],
+        idx_observables = 1,
+        surf_margin = 10,
+        mesh_step = 100
+    ) -> None:
+
+        x_data = get_matrix(self.emb_data['reduced_coordinates'])
+        if self.ssm_dim == 2:
+            U, _, _ = np.linalg.svd(x_data, full_matrices=True)
+            max_vals = (1+surf_margin/100) * np.amax(np.matmul(U.T,x_data), axis = 1)
+            transf_mesh_generation = np.matmul(U,np.diag(max_vals))
+        else:
+            raise NotImplementedError(
+            (
+                f"Not implemented."
+            )
+            )
+
+        surface_dict = compute_surface(
+            surface_function = self.decoder.predict,
+            idx_reduced_coordinates = idx_reduced_coordinates,
+            transf_mesh_generation = transf_mesh_generation,
+            idx_observables = idx_observables,
+            mesh_step = mesh_step
+        )
+
+        return surface_dict
 
     def get_reduced_dynamics(
         self,
@@ -332,7 +365,10 @@ class SSMLearn:
         plt_labels = ['time [s]', 'x', ''],
         plt_width = 560,  
         plt_height = 420,
-        dict_margin = {}
+        dict_margin = {},
+        add_surface = False,
+        surface_margin = 10,
+        surface_colorscale = 'agsunset'
     ) -> None:
         x_plot, y_plot, z_plot = [], [], []
         if bool(dict_margin) == False:
@@ -431,7 +467,17 @@ class SSMLearn:
             x_label = plt_labels[1] + '<sub>' + str(idx_coordinates[0]) + '</sub>'
             y_label = plt_labels[1] + '<sub>' + str(idx_coordinates[1]) + '</sub>'   
 
-        if len(idx_coordinates) == 3:      
+        if len(idx_coordinates) == 3: 
+            if add_surface == True:    
+                surface_dict = self.get_surface(
+                    idx_reduced_coordinates = [1, 2],
+                    idx_observables = idx_coordinates,
+                    surf_margin = surface_margin,
+                    mesh_step = 100
+                )
+                surface_dict['colorscale'] = surface_colorscale
+            else:
+                surface_dict = {}
             z_plot = [x_to_plot[i][idx_coordinates[2]-1,:] for i in range(len(x_to_plot))]
             if with_predictions == True:
                 z_pred_plot = [x_pred_to_plot[i][idx_coordinates[2]-1,:] for i in range(len(x_pred_to_plot))]
@@ -450,7 +496,9 @@ class SSMLearn:
                 axes_labels = [x_label, y_label, z_label],
                 plt_width = plt_width,  
                 plt_height = plt_height,
-                dict_margin = dict_margin
+                dict_margin = dict_margin,
+                add_surface = add_surface,
+                surface_dict = surface_dict
             )
         else:
             fig = plot_xy(
