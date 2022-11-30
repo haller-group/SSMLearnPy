@@ -117,6 +117,7 @@ class SSMLearn:
     ) -> None:
         self.encoder = reduce_dimensions(
             method=method,
+            n_dim = self.ssm_dim
             **keyargs
         )
         if self.emb_data['reduced_coordinates'] is None:
@@ -180,6 +181,10 @@ class SSMLearn:
             y,
             **regression_args
         )
+        lin_part = self.reduced_dynamics.map_info['coefficients'][:,:X[0].shape[0]]
+        d, v = np.linalg.eig(lin_part)
+        self.reduced_dynamics.map_info['eigenvalues_lin_part'] = d
+        self.reduced_dynamics.map_info['eigenvectors_lin_part'] = v
 
     def predict_geometry(
         self,

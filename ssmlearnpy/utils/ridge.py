@@ -57,6 +57,16 @@ def get_fit_ridge(
 
     logger.info("Fitting regression model")
     mdl.fit(X.T, y.T)
+
+    mdl.map_info = {}
+    scaler_coefs = mdl.named_steps.scaler.scale_
+    estimators = mdl.named_steps.ridge_regressor.estimators_
+    map_coefs = np.zeros((len(estimators), len(scaler_coefs)))
+    for iRow in range(len(estimators)):
+        map_coefs[iRow,:] = estimators[iRow].coef_ / scaler_coefs
+    mdl.map_info['coefficients'] = map_coefs
+    mdl.map_info['exponents'] = mdl.named_steps.poly_transf.powers_
+
     return mdl
 
 

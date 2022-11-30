@@ -8,6 +8,8 @@ def reduce_dimensions(
         return BasicReducer(**keyargs)
     if method == 'fastssm':
         return BasicReducer(**keyargs)
+    if method == 'linearchart':
+        return LinearChart(**keyargs)    
     else:
         raise NotImplementedError(
             (
@@ -34,3 +36,22 @@ class BasicReducer:
             )
         )
 
+class LinearChart:
+    def __init__(
+            self,
+            n_dim,
+            matrix_representation
+        ) -> None:
+        self.n_dim = n_dim
+        self.matrix_representation = matrix_representation
+
+    def fit(self, data):
+        pass
+
+    def predict(self, data):
+        return list(
+            map(
+                lambda x: x[:self.n_dim, :],
+                data['observables']
+            )
+        )    
