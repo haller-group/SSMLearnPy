@@ -16,11 +16,17 @@ logger = logging.getLogger("ridge_regression")
 def get_fit_ridge(
     X, 
     y,
+    constraints: list = None,
     poly_degree: int=2,
     fit_intercept: bool=False,
     alpha: list=0,
     cv: int=2
 ):
+    """Fit a ridge regression model to the data. 
+        X: (n_features, n_samples) or list 
+        y: (n_outputs, n_samples) or list 
+        constraints: list of lists: [LHS, RHS] such that model.predict(LHS[i]) == RHS[i]. model.predict(LHS[i]) and RHS[i] should have the same shape
+    """    
     if(isinstance(X, list)):
         logger.info("Transforming data")
         X = get_matrix(X)
@@ -54,9 +60,24 @@ def get_fit_ridge(
             ('ridge_regressor', regressor)
         ]
     )
-
+    # explicitly set sample weights to 1 in case we have constraints
+    sample_weight = np.ones(X.shape[1])
+        
     logger.info("Fitting regression model")
-    mdl.fit(X.T, y.T)
+    if constraints is not None:
+        # TODO: should do a cleaner implementation
+        # if we have constraints, add them to X and y with a large weight
+        constLHS, constRHS = constraints
+        for i in range(len(constLHS)):
+            lhs = np.array(constLHS[i]).reshape(-1,1)
+            rhs = np.array(constRHS[i]).reshape(-1,1)
+            X = np.append(X, lhs, axis = 1)
+            y = np.append(y, rhs, axis = 1)
+        sample_weight = np.ones(X.shape[1])
+        sample_weight[-len(constLHS):] = 1e10
+        
+
+    mdl.fit(X.T, y.T, ridge_regressor__sample_weight = sample_weight)
 
     mdl.map_info = {}
     scaler_coefs = mdl.named_steps.scaler.scale_
