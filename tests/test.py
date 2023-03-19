@@ -1,8 +1,8 @@
 from scipy.integrate import solve_ivp
 from ssmlearnpy.utils import ridge
 from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
-from ssmlearnpy.reduced_dynamics.normalform import NormalForm
-
+from ssmlearnpy.reduced_dynamics.normalform import NormalForm, NonlinearCoordinateTransform
+from sklearn.preprocessing import PolynomialFeatures
 
 import numpy as np
 
@@ -67,6 +67,7 @@ def test_ridge_constrained():
     sol_1 = solve_ivp(vectorfield, [t[0], t[-1]], ic_1, t_eval=t)
     trajectories = [sol_0.y, sol_1.y]
     X, y  = shift_or_differentiate(trajectories, [t,t], 'flow')
+    #print(X[0].shape)
     # add the constraints to the fixed points explicitly
     constLHS = [[0,0],
                 [-1, 0],
@@ -124,6 +125,32 @@ def test_normalform_resonance():
     resonances = nf._resonance_condition(degree = 3)
     whereistrue = np.where(resonances)
     assert np.allclose(whereistrue, [[0,1],[4,5]])
+
+
+
+def test_nonlinear_change_of_coords():
+    xx = np.linspace(-1, 1, 10)
+    yy = np.linspace(-0.5, 0.5, 10)
+    transformedx = xx+yy+xx**2+yy**2
+    vect = np.array([xx, yy])
+    #print(vect.shape)
+    transformedy = xx-yy+xx**3-yy*xx
+    poly_features= PolynomialFeatures(degree=3, include_bias=False).fit(vect.T)
+    vect_transform = poly_features.transform(vect.T)
+    #print(vect_transform.shape)
+    exponents = poly_features.powers_.T
+    #print(exponents)
+    # (2, 10)
+    # (10, 9)
+    # [[1 0 2 1 0 3 2 1 0]
+    # [0 1 0 1 2 0 1 2 3]]
+    transformationCoeffs = np.array([[1,1, 1, 0, 1,0, 0,0,0], # x + y +x^2 +y^2
+                                     [1, -1, 0, -1, 0, 1, 0, 0, 0]]) # x - y + x^3 - yx
+    TF = NonlinearCoordinateTransform(2, 3, transform_coefficients=transformationCoeffs)
+    z = TF.transform(vect)
+    assert np.allclose(z[0,:], transformedx)
+
+    assert np.allclose(z[1,:], transformedy)
     
 if __name__ == '__main__':
     test_differentiation()
@@ -132,5 +159,6 @@ if __name__ == '__main__':
     test_normalform_nonlinear_coeffs()
     test_normalform_lincombinations()
     test_normalform_resonance()
+    test_nonlinear_change_of_coords()
     
     
