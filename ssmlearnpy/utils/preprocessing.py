@@ -23,7 +23,7 @@ def complex_polynomial_features(y, degree = 3, skip_linear = False, structure = 
     features = []
     # structure can be a boolean matrix compatible with powers
     if structure is not None:
-        assert structure.shape[1] == powers.shape[1]
+        assert structure.shape[0] == powers.shape[1]
         nonzero_entries = powers[:, structure] 
     else:
         nonzero_entries = powers

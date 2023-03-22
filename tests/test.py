@@ -4,9 +4,10 @@ from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differen
 from ssmlearnpy.reduced_dynamics.normalform import NormalForm, NonlinearCoordinateTransform
 from sklearn.preprocessing import PolynomialFeatures
 
-from ssmlearnpy.reduced_dynamics.normalform import NonlinearCoordinateTransform, NormalForm, create_normalform_transform_objective
+from ssmlearnpy.reduced_dynamics.normalform import NonlinearCoordinateTransform, NormalForm, create_normalform_transform_objective, prepare_normalform_transform_optimization, unpack_optimized_coeffs
+from scipy.optimize import minimize
 import numpy as np
-
+from scipy.io import savemat
 
 from ssmlearnpy.utils.preprocessing import complex_polynomial_features
 
@@ -163,11 +164,29 @@ def test_complex_polynomial_features():
     complexpoly = complex_polynomial_features(Y, degree=3)
     assert np.allclose(poly.T, complexpoly)
 
-def test_complex_polynomial_features():
-    Y = np.random.rand(2,10)
-    poly = PolynomialFeatures(degree=3, include_bias=False).fit_transform(Y.T)
-    complexpoly = complex_polynomial_features(Y, degree=3)
-    assert np.allclose(poly.T, complexpoly)
+def test_prepare_normalform_transform_optimization():
+    t = np.linspace(0, 10, 1000)
+    dt = t[1] - t[0]
+    ic_0 = np.array([0.1, 0])
+    ic_1 = np.array([0.112, 0])
+    sol_0 = solve_ivp(vectorfield, [t[0], t[-1]], ic_0, t_eval=t)
+    sol_1 = solve_ivp(vectorfield, [t[0], t[-1]], ic_1, t_eval=t)
+    trajectories = [sol_0.y - np.array([1,0]).reshape(-1,1), sol_1.y - np.array([1,0]).reshape(-1,1)]
+    times = [t, t]
+    X, y  = shift_or_differentiate(trajectories, times, 'flow') # get an estimate for the linear part
+    # add the constraints to the fixed points explicitly
+    constLHS = [[-1, 0]]
+    constRHS = [[0, 0]]
+    cons = [constLHS, constRHS]
+    # Fit reduced model
+    mdl = ridge.get_fit_ridge(X, y, poly_degree = 3, constraints = cons)
+    linearPart = mdl.map_info['coefficients'][:,:2]
+    _, v = np.linalg.eig(linearPart)
+    linpartDiag = np.linalg.inv(v)@linearPart@v
+    # v^{-1}@A@v is diagonal. transform the coordinates with v^{-1}.
+    newcoord = [np.linalg.inv(v)@x for x in trajectories]
+    nf, linerror, Transformation_normalform_polynomial_features, DTransformation_normalform_polynomial_features = prepare_normalform_transform_optimization( times, newcoord, linpartDiag)
+    assert(DTransformation_normalform_polynomial_features[0].shape == (6, 1000))
 
 
 
@@ -187,18 +206,26 @@ def test_normalform_transform():
     constRHS = [[0, 0]]
     cons = [constLHS, constRHS]
     # Fit reduced model
-    mdl = ridge.get_fit_ridge(X, y, poly_degree = 3, constraints = cons)
+    mdl = ridge.get_fit_ridge(X, y, poly_degree = 5, constraints = cons)
     linearPart = mdl.map_info['coefficients'][:,:2]
     w, v = np.linalg.eig(linearPart)
     #print(np.linalg.inv(v)@linearPart@v)
     linpartDiag = np.linalg.inv(v)@linearPart@v
     # v^{-1}@A@v is diagonal. transform the coordinates with v^{-1}.
     newcoord = [np.linalg.inv(v)@x for x in trajectories]
-    
+    dictTosave = {}
+    dictTosave['trajectories'] = trajectories
+    dictTosave['times'] = times
+    dictTosave['newcoord'] = newcoord
+    savemat('test_SSMLearn.mat', dictTosave)
     #print(newcoord[0][0,:]-np.conj(newcoord[0])[1,:]) is all zeros.
-
-    objectiv = create_normalform_transform_objective(times, newcoord, linpartDiag, degree = 3)
-    print(objectiv(np.array([1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0])).shape)
+    n_unknowns_dynamics, n_unknowns_transformation, objectiv = create_normalform_transform_objective(times, newcoord, linpartDiag, degree = 3)
+    np.random.seed(0)
+    res = minimize(objectiv, np.array([1, 0,1, 1,1, 0, 0, 1, 0, 0, 0, 1, 0, 0]), method='BFGS', options={'disp': True})
+    d = unpack_optimized_coeffs(res.x, 1, n_unknowns_dynamics, n_unknowns_transformation)
+    real_imag = np.array([np.real(d['coeff_dynamics']), np.imag(d['coeff_dynamics'])])
+    assert(np.allclose(real_imag, np.array([-0.52697, -5.1146])))
+        
 
 if __name__ == '__main__':
     test_differentiation()
@@ -208,6 +235,5 @@ if __name__ == '__main__':
     test_normalform_lincombinations()
     test_normalform_resonance()
     test_nonlinear_change_of_coords()
+    test_prepare_normalform_transform_optimization()
     test_normalform_transform()
-    #test_complex_polynomial_features()
-    
