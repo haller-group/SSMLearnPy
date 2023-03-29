@@ -10,7 +10,7 @@ import numpy as np
 from scipy.io import savemat
 
 from ssmlearnpy.utils.preprocessing import complex_polynomial_features
-
+from autograd import elementwise_grad as egrad
 def test_differentiation():
     # test the finite difference function
     x = np.linspace(0, 10, 1000)
@@ -186,6 +186,7 @@ def test_prepare_normalform_transform_optimization():
     # v^{-1}@A@v is diagonal. transform the coordinates with v^{-1}.
     newcoord = [np.linalg.inv(v)@x for x in trajectories]
     nf, linerror, Transformation_normalform_polynomial_features, DTransformation_normalform_polynomial_features = prepare_normalform_transform_optimization( times, newcoord, linpartDiag)
+
     assert(DTransformation_normalform_polynomial_features[0].shape == (6, 1000))
 
 
@@ -221,11 +222,38 @@ def test_normalform_transform():
     #print(newcoord[0][0,:]-np.conj(newcoord[0])[1,:]) is all zeros.
     n_unknowns_dynamics, n_unknowns_transformation, objectiv = create_normalform_transform_objective(times, newcoord, linpartDiag, degree = 3)
     np.random.seed(0)
-    res = minimize(objectiv, np.array([1, 0,1, 1,1, 0, 0, 1, 0, 0, 0, 1, 0, 0]), method='BFGS', options={'disp': True})
+
+    icfrommatlab = np.array([
+  -0.046665229741644,
+   0.088871461583745,
+  -0.026512243121989,
+  -0.081083271970684,
+   0.323878856507470,
+  -0.039156803945355,
+  -0.097782606679839,
+  -0.671912310868208,
+  -1.346404263906166,
+   0.222731265038940,
+   0.014122867866736,
+  -0.003328268772583,
+  -0.009526614976568,
+   0.902348990674412])
+    ic_ = np.array([1, 0,1, 1,1, 0, 0, 1, 0, 0, 0, 1, 0, 0])
+    res = minimize(objectiv, icfrommatlab, method='BFGS', options={'disp': True})
     d = unpack_optimized_coeffs(res.x, 1, n_unknowns_dynamics, n_unknowns_transformation)
+    print(d['coeff_dynamics'])
+    print(d['coeff_transformation'].shape)
     real_imag = np.array([np.real(d['coeff_dynamics']), np.imag(d['coeff_dynamics'])])
     assert(np.allclose(real_imag, np.array([-0.52697, -5.1146])))
         
+def test_grad():
+    import autograd.numpy as np
+    a = lambda x : complex_polynomial_features(x, degree=5)
+    b = egrad(a)
+    print(b(np.array([0.,0.]).reshape(-1,1)))
+
+
+
 
 if __name__ == '__main__':
     test_differentiation()
@@ -236,4 +264,5 @@ if __name__ == '__main__':
     test_normalform_resonance()
     test_nonlinear_change_of_coords()
     test_prepare_normalform_transform_optimization()
+    #test_grad()
     test_normalform_transform()
