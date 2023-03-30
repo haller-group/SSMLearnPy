@@ -315,14 +315,14 @@ def wrap_optimized_coefficients(ndofs, LinearPart, degree, optimized_coefficient
     coeffs_transformation = optimized_coefficients['coeff_transformation']
     #print(coeffs_transformation.shape)
     coeffs_transformation = np.concatenate((np.eye(2*ndofs)[:ndofs, :], coeffs_transformation), axis = 1)
-    coeffs_trajsformation_conj = np.repeat(coeffs_transformation, 2, axis = 0)  # need to add the complex conjugate to evaluate the transformed coords
-    coeffs_trajsformation_conj[ndofs:, :] = np.conj(coeffs_transformation[:ndofs, :])
+    #coeffs_trajsformation_conj = np.repeat(coeffs_transformation, 2, axis = 0)  # need to add the complex conjugate to evaluate the transformed coords
+    #coeffs_trajsformation_conj[ndofs:, :] = np.conj(coeffs_transformation[:ndofs, :])
     # need to add the linear part of the transformation:
     linear_transformation = np.eye(2*ndofs)
-    transform_coefficients = np.concatenate((linear_transformation, coeffs_trajsformation_conj), axis = 1)
+    #transform_coefficients = np.concatenate((linear_transformation, coeffs_trajsformation_conj), axis = 1)
     #print(transform_coefficients)
 
-    return coeffs_trajsformation_conj, NonlinearCoordinateTransform(2*ndofs, degree, inverse_transform_coefficients=coeffs_trajsformation_conj)
+    return coeffs_transformation, NonlinearCoordinateTransform(2*ndofs, degree, inverse_transform_coefficients=coeffs_transformation)
 
 
 
