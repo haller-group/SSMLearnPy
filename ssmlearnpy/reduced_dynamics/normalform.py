@@ -30,29 +30,18 @@ class NonlinearCoordinateTransform():
         self.transform_map = None
         self.inverse_transform_map = None
         if self.transform_coefficients is not None:
-            self.transform_map = self._compute_transform_map(self.transform_coefficients)
+            self.transform_map = compute_polynomial_map(self.transform_coefficients, self.degree)
         if self.inverse_transform_coefficients is not None:
-            self.inverse_transform_map = self._compute_transform_map(self.inverse_transform_coefficients)
+            self.inverse_transform_map = compute_polynomial_map(self.inverse_transform_coefficients, self.degree)
     
-    def _compute_transform_map(self, transform_coefficients):
-        """
-        Compute the polynomial map corresponding to the transformation coefficients
-        """
-        #features = PolynomialFeatures(degree=self.degree, include_bias=False)
-        #complex_polynomial_features
-        # return a function to be fitted and used in the transform method
-        #print(transform_coefficients)
- #       cc = 0*transform_coefficients
-#        cc[:2,:2]=transform_coefficients[:2,:2]
-        return lambda x : transform_coefficients@complex_polynomial_features(x,degree=self.degree) # note the transpose because PolynomialFeatures expects the data to be of shape (n_samples, n_features)
-    
+
 
     def set_transform_coefficients(self, transform_coefficients):
         self.transform_coefficients = transform_coefficients
-        self.transform_map = self._compute_transform_map(self.transform_coefficients)
+        self.transform_map = compute_polynomial_map(self.transform_coefficients, self.degree)
     def set_inverse_transform_coefficients(self, inverse_transform_coefficients):
         self.inverse_transform_coefficients = inverse_transform_coefficients
-        self.inverse_transform_map = self._compute_transform_map(self.inverse_transform_coefficients)
+        self.inverse_transform_map = compute_polynomial_map(self.inverse_transform_coefficients, self.degree)
 
 
 
@@ -63,7 +52,7 @@ class NonlinearCoordinateTransform():
         """
         if self.transform_coefficients is None:
             raise RuntimeError("The transformation coefficients have not been set")
-        return self.transform_map(z) # transpose again to get the output in the right shape
+        return self.transform_map(z).T # transpose again to get the output in the right shape
 
 
     def inverse_transform(self, z):
@@ -100,12 +89,9 @@ class NormalForm:
         """
         Computes the coefficients of the nonlinear part of the vector field. For more info see M. Cenedese (2021) 
         """
-        dimensions = self.LinearPart.shape[0] # number of dimensions of the manifold ~ number of eigenvalues
-        # generate a dummy set of polynomial features to read off the coefficient matrix:
-        # TODO: not too elegant
-        poly = PolynomialFeatures(degree=degree, include_bias=False).fit(np.ones( (1, dimensions) ))
-        exponents_of_nonlinear_map = poly.powers_.T # gives a matrix of shape (dimensions, number of monomials of degree <= degree)
-        exponents_of_nonlinear_map = exponents_of_nonlinear_map[: , dimensions:]
+        dimension = self.LinearPart.shape[0] # number of dimensions of the manifold ~ number of eigenvalues
+        exponents_of_nonlinear_map = generate_exponents(dimension, degree)# gives a matrix of shape (dimension, number of monomials of degree <= degree)
+        exponents_of_nonlinear_map = exponents_of_nonlinear_map[: , dimension:]
         return exponents_of_nonlinear_map
     
 
@@ -274,33 +260,6 @@ def unpack_optimized_coeffs(optimal_x, ndofs, normalform, n_unknowns_dynamics, n
     return {'coeff_dynamics': coeff_dynamics, 'coeff_transformation': coeff_transformation}
 
 
-# def create_normalform_transofmration(times, trajectories, Linearpart, type = 'flow', degree = 3):
-#     """
-#     Minimize
-#     ||d\dt (y + f_normalform(y)) - \Lambda*(y+f_normalform(y)) - N_normalform(y+f_normalform)||^2
-#     where \Lambda is the linear part of the dynamics and N_normalform is the nonlinear part of the normal form dynamics
-#     f_normalform is the nonlinear part of the normal form transformation z = T^{-1}(y)
-#     based on the linear part we enforce the structure of the nonlinearities in N_normalform and f_normalform.
-#     Parameters:
-#         times: list of times
-#         trajectories: list of trajectories (each of shape (n_features, n_samples))
-#         LinearPart: linear part of the dynamics
-#         type: 'flow' or 'map'
-#         degree: max. degree of the polynomial transformation
-#     Returns:
-#         normalform transformation
-#         normalform dynamics
-#     """
-#     n_unknowns_dynamics, n_unknowns_transformation, objective = create_normalform_transform_objective(times, trajectories, Linearpart, type, degree)
-#     ndofs = int(Linearpart.shape[0] / 2) # only consider the first half of the coordinates: conjugates are discarded 
-#     # set up optimization
-#     x0 = np.random.rand(n_unknowns_dynamics + n_unknowns_transformation) # initial guess
-#     # optimize
-#     optimal_x = minimize(objective, x0, method = 'L-BFGS-B', options = {'disp': True, 'maxiter': 10000}).x
-#     # unpack the optimized coefficients
-#     return unpack_optimized_coeffs(optimal_x, ndofs, n_unknowns_dynamics, n_unknowns_transformation)
-
-
 def wrap_optimized_coefficients(ndofs, LinearPart, degree, optimized_coefficients, find_inverse = False):
     """
     Wrap the optimized coefficients into a NonlinearCoordinateTransform object
@@ -309,21 +268,29 @@ def wrap_optimized_coefficients(ndofs, LinearPart, degree, optimized_coefficient
         find_inverse: if True, the inverse transformation is combuted with regression
     Returns:
         NonlinearCoordinateTransform object
-        normal form dynamics
+        dynamics: dictionary collecting the exponents, coefficients and a callable vectorfield
     """
     coeff_dynamics = optimized_coefficients['coeff_dynamics']
+    coeff_dynamics = np.concatenate((LinearPart[:ndofs, :], coeff_dynamics), axis = 1) 
     coeffs_transformation = optimized_coefficients['coeff_transformation']
-    #print(coeffs_transformation.shape)
     coeffs_transformation = np.concatenate((np.eye(2*ndofs)[:ndofs, :], coeffs_transformation), axis = 1)
-    #coeffs_trajsformation_conj = np.repeat(coeffs_transformation, 2, axis = 0)  # need to add the complex conjugate to evaluate the transformed coords
-    #coeffs_trajsformation_conj[ndofs:, :] = np.conj(coeffs_transformation[:ndofs, :])
-    # need to add the linear part of the transformation:
-    linear_transformation = np.eye(2*ndofs)
-    #transform_coefficients = np.concatenate((linear_transformation, coeffs_trajsformation_conj), axis = 1)
-    #print(transform_coefficients)
+    # collect the reduced dynamics in a dictionary:
+    dynamics = {}
+    dynamics['coefficients'] = coeff_dynamics
+    dynamics['exponents'] = generate_exponents(2*ndofs, degree)
+    def vectorfield(t,x):
+        xeval = x.reshape(-1,1)
+        evaluation = compute_polynomial_map(coeff_dynamics, degree)(xeval)
+        return insert_complex_conjugate(evaluation).reshape(1,-1) # need to reshape this for the complex_polynomial_features function
+    dynamics['vectorfield'] = vectorfield
+    return NonlinearCoordinateTransform(2*ndofs, degree, inverse_transform_coefficients=coeffs_transformation), dynamics
 
-    return coeffs_transformation, NonlinearCoordinateTransform(2*ndofs, degree, inverse_transform_coefficients=coeffs_transformation)
 
+def generate_exponents(ndofs, degree):
+    # generate a dummy set of polynomial features to read off the coefficient matrix:
+    # TODO: not too elegant
+    poly = PolynomialFeatures(degree=degree, include_bias=False).fit(np.ones( (1, ndofs) ))
+    return poly.powers_.T # gives a matrix of shape (ndofs, number of monomials of degree <= degree)
 
 
 def insert_zeros(coef, structure):
@@ -336,3 +303,11 @@ def insert_zeros(coef, structure):
     return full_coeff_matrix.reshape(1, -1)
     
 
+def compute_polynomial_map(transform_coefficients, degree):
+    """
+    Compute the polynomial map corresponding to the given coefficients
+    """
+    return lambda x : transform_coefficients@complex_polynomial_features(x, degree=degree)
+
+def insert_complex_conjugate(x):
+    return np.concatenate((x, np.conj(x)), axis = 0)
