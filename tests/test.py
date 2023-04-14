@@ -10,7 +10,6 @@ import numpy as np
 from scipy.io import savemat
 
 from ssmlearnpy.utils.preprocessing import complex_polynomial_features
-from autograd import elementwise_grad as egrad
 def test_differentiation():
     # test the finite difference function
     x = np.linspace(0, 10, 1000)
@@ -61,6 +60,30 @@ def test_ridge():
     ]
     cons = [constLHS, constRHS]
     assert np.allclose(y_pred, true_y, atol=1e-2) # the vector fields match to within 1e-2
+
+
+def test_ridge_with_or_without_scaling():
+    t = np.linspace(0, 10, 1000)
+    dt = t[1] - t[0]
+    ic_0 = np.array([0.1, 0])
+    ic_1 = np.array([-0.1, 0])
+    sol_0 = solve_ivp(vectorfield, [t[0], t[-1]], ic_0, t_eval=t)
+    sol_1 = solve_ivp(vectorfield, [t[0], t[-1]], ic_1, t_eval=t)
+    trajectories = [sol_0.y, sol_1.y]
+    X, y  = shift_or_differentiate(trajectories, [t,t], 'flow')
+
+    # Fit reduced model
+    mdl = ridge.get_fit_ridge(X, y, poly_degree = 5) # with scaling
+    mdl_noscale = ridge.get_fit_ridge(X, y, do_scaling = False, poly_degree = 5) # with scaling
+    # generate data to evaluate vector field
+    xx = np.linspace(-1, 1, 10)
+    yy = np.linspace(-0.5, 0.5, 10)
+    Xgrid, Ygrid = np.meshgrid(xx, yy)
+    toEvaluate = np.array([Xgrid.ravel(), Ygrid.ravel()]).T
+    # evaluate vector field
+    y_pred_scale = mdl.predict(toEvaluate)
+    y_pred_noscale = mdl_noscale.predict(toEvaluate)
+    assert np.allclose(y_pred_scale, y_pred_noscale)
 
 def test_ridge_constrained():
     # Generate data to fit the model (actual trajcetories)
@@ -246,12 +269,6 @@ def test_normalform_transform():
     real_imag = np.array([np.real(d['coeff_dynamics']), np.imag(d['coeff_dynamics'])])
     assert(np.allclose(real_imag, np.array([-0.52697, -5.1146])))
         
-def test_grad():
-    import autograd.numpy as np
-    a = lambda x : complex_polynomial_features(x, degree=5)
-    b = egrad(a)
-    print(b(np.array([0.,0.]).reshape(-1,1)))
-
 
 
 
@@ -259,10 +276,10 @@ if __name__ == '__main__':
     test_differentiation()
     test_ridge()
     test_ridge_constrained()
+    test_ridge_with_or_without_scaling()
     test_normalform_nonlinear_coeffs()
     test_normalform_lincombinations()
     test_normalform_resonance()
-    test_nonlinear_change_of_coords()
-    test_prepare_normalform_transform_optimization()
-    #test_grad()
-    test_normalform_transform()
+    #test_nonlinear_change_of_coords()
+    #test_prepare_normalform_transform_optimization()
+    #test_normalform_transform()
