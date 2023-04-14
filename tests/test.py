@@ -1,13 +1,16 @@
 from scipy.integrate import solve_ivp
 from ssmlearnpy.utils import ridge
+from ssmlearnpy import SSMLearn
+
 from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
 from ssmlearnpy.reduced_dynamics.normalform import NormalForm, NonlinearCoordinateTransform
 from sklearn.preprocessing import PolynomialFeatures
 
 from ssmlearnpy.reduced_dynamics.normalform import NonlinearCoordinateTransform, NormalForm, create_normalform_transform_objective, prepare_normalform_transform_optimization, unpack_optimized_coeffs
+from ssmlearnpy.geometry.coordinates_embedding import coordinates_embedding
 from scipy.optimize import minimize
 import numpy as np
-from scipy.io import savemat
+from scipy.io import savemat, loadmat
 
 from ssmlearnpy.utils.preprocessing import complex_polynomial_features
 def test_differentiation():
@@ -124,7 +127,28 @@ def test_ridge_constrained():
     # check that the constraints are satisfied
     assert np.allclose(mdl.predict(np.array(constLHS)), np.array(constRHS))
 
+def test_delay_embedding():
+    data = loadmat('../examples/brakereussbeam/data.mat')['data_BRB']
 
+    TimeDIC = data[0,0].item()[0]
+    DisplacementDIC = data[0,0].item()[1]
+    TimeACC = data[0,0].item()[2]
+    AccelerationACC = data[0,0].item()[3]
+    Xmesh = data[0,0].item()[4]
+    Units = data[0,0].item()[5]
+    LocationACC = data[0,0].item()[6]
+    PFFResultsACC = data[0,0].item()[7]
+    ssm = SSMLearn(
+    t = [TimeDIC.ravel()], 
+    x = [DisplacementDIC], 
+    ssm_dim=2, 
+    dynamics_type = 'flow'
+    )
+    referenceData = loadmat('test_data.mat')['yData']
+    t_y, y, opts_embedding = coordinates_embedding(ssm.emb_data['time'], ssm.emb_data['observables'],
+                                               imdim = ssm.ssm_dim, over_embedding = 5)
+    assert np.allclose(t_y, referenceData[0,0])
+    assert np.allclose(y, referenceData[0,1])
 
 # test normal form transforms:
 def test_normalform_nonlinear_coeffs():
@@ -277,6 +301,7 @@ if __name__ == '__main__':
     test_ridge()
     test_ridge_constrained()
     test_ridge_with_or_without_scaling()
+    test_delay_embedding()
     test_normalform_nonlinear_coeffs()
     test_normalform_lincombinations()
     test_normalform_resonance()
