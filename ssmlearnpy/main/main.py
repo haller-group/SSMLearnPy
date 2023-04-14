@@ -1,7 +1,6 @@
 import logging
 
 import numpy as np
-import sklearn
 
 from ssmlearnpy.geometry.coordinates_embedding import coordinates_embedding
 from ssmlearnpy.geometry.dimensionality_reduction import reduce_dimensions
@@ -37,7 +36,6 @@ class SSMLearn:
         derive_embdedding=True,
         ssm_dim: int=None,
         coordinates_embeddings_args: dict={},
-        reduced_coordinates_method: str='basic',
         dynamics_type = 'flow',
         dynamics_structure = 'generic',
         error_metric = 'NTE'
@@ -107,12 +105,12 @@ class SSMLearn:
     ) -> None:
         self.encoder = reduce_dimensions(
             method=method,
-            n_dim = self.ssm_dim
+            n_dim = self.ssm_dim,
             **keyargs
         )
         if self.emb_data['reduced_coordinates'] is None:
-            self.encoder.fit(self.emb_data)
-            self.emb_data['reduced_coordinates']=self.encoder.predict(self.emb_data)
+            self.encoder.fit(self.emb_data['observables'])
+            self.emb_data['reduced_coordinates']=self.encoder.predict(self.emb_data['observables'])
         else:
             logger.info("Reduced coordinated already passed to SSMLearn, skipping.")
 

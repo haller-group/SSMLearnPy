@@ -23,10 +23,20 @@ def get_fit_ridge(
     cv: int=2
 ):
     """Fit a ridge regression model to the data. 
+    Parameters:
         X: (n_features, n_samples) or list 
         y: (n_outputs, n_samples) or list 
         constraints: list of lists: [LHS, RHS] such that model.predict(LHS[i]) == RHS[i].
                  model.predict(LHS[i]) and RHS[i] should have the same shape
+        do_scaling: bool, whether to apply a StandardScaler to the data before fitting
+        poly_degree: int, degree of the polynomial to fit
+        fit_intercept: bool, whether to include the constant term in the regression
+                        if False, this means that the model will be forced to pass through the origin
+        alpha: float or list of floats, regularization parameter
+        cv: int, number of folds for cross validation. If cv>=2, alpha must be a list
+    Returns:
+        mdl: sklearn Pipeline object containing a PolynomialFeatures,
+                 an optional StandardScaler, and Ridge regression 
     """    
     if(isinstance(X, list)):
         logger.info("Transforming data")
@@ -38,7 +48,7 @@ def get_fit_ridge(
     if cv>=2 and isinstance(alpha, list):
         logger.info(f"CV={cv} on ridge regression")
         regressor = RidgeCV(
-                fit_intercept=False,
+                fit_intercept=fit_intercept,
                 alphas=alpha,
                 cv=cv
                 )
@@ -48,7 +58,7 @@ def get_fit_ridge(
         if isinstance(alpha, list):
             raise RuntimeError("Found alpha to be a list and cv to be <2.")
         regressor = Ridge(
-                fit_intercept=False,
+                fit_intercept=fit_intercept,
                 alpha=alpha
                 )
     if do_scaling: # default is to include a standard scaler

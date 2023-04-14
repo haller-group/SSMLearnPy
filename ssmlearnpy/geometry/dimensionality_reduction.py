@@ -1,4 +1,6 @@
 import numpy as np
+from ssmlearnpy.utils.ridge import get_matrix
+
 
 def reduce_dimensions(
         method,
@@ -29,29 +31,30 @@ class BasicReducer:
         pass
 
     def predict(self, data):
-        return list(
-            map(
-                lambda x: x[:self.n_dim, :],
-                data['observables']
-            )
-        )
+        return [data_i[:self.n_dim] for data_i in data]
 
 class LinearChart:
     def __init__(
             self,
             n_dim,
-            matrix_representation
+            matrix_representation = None
         ) -> None:
         self.n_dim = n_dim
         self.matrix_representation = matrix_representation
 
     def fit(self, data):
-        pass
-
+        if self.matrix_representation is not None:
+            pass
+        x_data = get_matrix(data)
+        U, s, v = np.linalg.svd(x_data, full_matrices = False)
+        self.matrix_representation = U[:, :self.n_dim]
+        return 
+        
     def predict(self, data):
-        return list(
-            map(
-                lambda x: x[:self.n_dim, :],
-                data['observables']
+        if self.matrix_representation is None:
+            raise RuntimeError(
+                (
+                    "No projection set for LinearChart. Provide a matrix representation or call .fit() first"
+                )
             )
-        )    
+        return [np.matmul( self.matrix_representation.T, data_i) for data_i in data]

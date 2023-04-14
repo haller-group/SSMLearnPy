@@ -144,11 +144,26 @@ def test_delay_embedding():
     ssm_dim=2, 
     dynamics_type = 'flow'
     )
-    referenceData = loadmat('test_data.mat')['yData']
+    referenceData = loadmat('test_BRB_from_ssmlearn.mat')['yData']
     t_y, y, opts_embedding = coordinates_embedding(ssm.emb_data['time'], ssm.emb_data['observables'],
                                                imdim = ssm.ssm_dim, over_embedding = 5)
     assert np.allclose(t_y, referenceData[0,0])
     assert np.allclose(y, referenceData[0,1])
+
+def test_dimensionality_reduction():
+    reference_yData = loadmat('test_BRB_from_ssmlearn.mat')['yData']
+    reference_etaData = loadmat('test_BRB_from_ssmlearn.mat')['etaData']
+    
+    ssm = SSMLearn(
+    t = [reference_yData[0,0]], 
+    x = [reference_yData[0,1]], 
+    ssm_dim=2, 
+    derive_embdedding = False,
+    dynamics_type = 'flow'# use the embedding from the reference data
+    )
+    ssm.get_reduced_coordinates('linearchart')
+    assert np.allclose(ssm.emb_data['reduced_coordinates'][0], reference_etaData[0,1])
+
 
 # test normal form transforms:
 def test_normalform_nonlinear_coeffs():
@@ -302,6 +317,7 @@ if __name__ == '__main__':
     test_ridge_constrained()
     test_ridge_with_or_without_scaling()
     test_delay_embedding()
+    test_dimensionality_reduction()
     test_normalform_nonlinear_coeffs()
     test_normalform_lincombinations()
     test_normalform_resonance()

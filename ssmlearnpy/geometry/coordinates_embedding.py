@@ -19,25 +19,25 @@ def coordinates_embedding(
     coordinate system y of dimension p. Optional inputs to be specified as
     'field_name','field value'
         
-    INPUT
-    t - list of time vectors
-    x - list of observed trajectories 
+    Parameters:
+    t : list of time vectors
+    x : list of observed trajectories 
     imdim - dimension of the invariant manifold to learn
         
-    OPTIONAL INPUT
-    over_embedding  - augment the minimal embedding dimension with a number of
+    over_embedding (optional): augment the minimal embedding dimension with a number of
                      time delayed measurements, default 0
-    force_embedding - force the embedding in the states of x, default false
-    time_stepping   - time stepping in the time series, default 1
-    shift_steps     - number of timesteps passed between components (but 
+    force_embedding (optional): force the embedding in the states of x, default false
+    time_stepping   (optional): time stepping in the time series, default 1
+    shift_steps     (optional): number of timesteps passed between components (but 
                      subsequent measurements are kept intact), default 1
-        If varargin is set to an integer value, it it set as OverEmbedding
-        
-    OUTPUT
-    y_data - cell array of dimension (N_traj,2) where the first column contains
+
+    Returns:
+    t_y : list of time vectors
+
+    y : cell array of dimension (N_traj,2) where the first column contains
         time instances (1 x mi each) and the second column the trajectories
         (p x mi each)
-    opts_embdedding - options containing the embedding information
+    opts_embdedding : options containing the embedding information
 
     """
     if not imdim:
