@@ -11,7 +11,7 @@ from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differen
 from ssmlearnpy.reduced_dynamics.advector import advect
 
 from ssmlearnpy.utils.compute_errors import compute_errors
-from ssmlearnpy.utils.ridge import get_fit_ridge
+from ssmlearnpy.utils.ridge import get_fit_ridge, fit_reduced_coords_and_parametrization
 from ssmlearnpy.utils.ridge import get_matrix
 from ssmlearnpy.utils.file_handler import get_vectors
 from ssmlearnpy.utils.plots import compute_surface
@@ -119,12 +119,15 @@ class SSMLearn:
         self,
         **regression_args
     ) -> None:
-        self.decoder = get_fit_ridge(
-            self.emb_data['reduced_coordinates'],
-            self.emb_data['observables'],
-            **regression_args
-        )
-
+        if self.emb_data['reduced_coordinates'] is not None: # reduced coordinates have been precomputed
+            self.decoder = get_fit_ridge(
+                self.emb_data['reduced_coordinates'],
+                self.emb_data['observables'],
+                **regression_args)
+        else: 
+            self.encoder, self.decoder = fit_reduced_coords_and_parametrization() # get both decoder and encoder
+            self.emb_data['reduced_coordinates'] = [self.encoder.predict(trajectory)
+                                                     for trajectory in self.emb_data['observables']]
     def get_surface(
         self,
         idx_reduced_coordinates = [1, 2],

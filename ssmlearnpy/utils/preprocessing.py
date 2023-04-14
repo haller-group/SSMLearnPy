@@ -1,7 +1,7 @@
 from sklearn.preprocessing import PolynomialFeatures
 import numpy as np
 
-def complex_polynomial_features(y, degree = 3, skip_linear = False, structure = None):
+def complex_polynomial_features(y, degree = 3, skip_linear = False, structure = None, include_bias = False):
     """
     This is a hack because PolynomialFeatures does not support complex data.
 
@@ -16,10 +16,13 @@ def complex_polynomial_features(y, degree = 3, skip_linear = False, structure = 
         (n_polynomial_terms, n_samples): array of polynomial features of y
     """
     size = y.shape[0]
-    p = PolynomialFeatures(degree=degree, include_bias=False).fit(np.ones((1, size))) 
+    p = PolynomialFeatures(degree=degree,
+                            include_bias=include_bias).fit(np.ones((1, size))) 
     powers = p.powers_.T
-    if skip_linear:
-        powers = powers[:, size:] # cut the linear part
+    if skip_linear and not include_bias:
+        powers = powers[:, size:] 
+    if skip_linear and include_bias:
+        powers = powers[:, size+1:] # cut the linear part
     features = []
     # structure can be a boolean matrix compatible with powers
     if structure is not None:
@@ -35,3 +38,27 @@ def complex_polynomial_features(y, degree = 3, skip_linear = False, structure = 
         features.append(prod)
     return np.array(features)
 
+
+
+def get_matrix(l:list):
+    return np.concatenate(l, axis=1)
+
+def generate_exponents(n_features, degree, include_bias = False):
+    # generate a dummy set of polynomial features to read off the coefficient matrix
+    poly = PolynomialFeatures(degree=degree,
+                               include_bias=include_bias).fit(np.ones( (1, n_features) ))
+    return poly.powers_.T # gives a matrix of shape (n_features, number of monomials of degree <= degree)
+
+
+
+def compute_polynomial_map(coefficients, degree, include_bias = False, skip_linear = False):
+    """
+    Compute the polynomial map corresponding to the given coefficients
+    """
+    return lambda x : np.matmul(coefficients,
+                                 complex_polynomial_features(x, degree=degree, 
+                                                             include_bias = include_bias,
+                                                               skip_linear=skip_linear))
+
+def insert_complex_conjugate(x):
+    return np.concatenate((x, np.conj(x)), axis = 0)

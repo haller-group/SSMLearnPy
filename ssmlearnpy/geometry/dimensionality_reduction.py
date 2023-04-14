@@ -1,5 +1,5 @@
 import numpy as np
-from ssmlearnpy.utils.ridge import get_matrix
+from ssmlearnpy.utils.preprocessing import get_matrix
 
 
 def reduce_dimensions(
@@ -31,7 +31,7 @@ class BasicReducer:
         pass
 
     def predict(self, data):
-        return [data_i[:self.n_dim] for data_i in data]
+        return [data_i[:self.n_dim, :] for data_i in data]
 
 class LinearChart:
     def __init__(
@@ -45,8 +45,9 @@ class LinearChart:
     def fit(self, data):
         if self.matrix_representation is not None:
             pass
-        x_data = get_matrix(data)
-        U, s, v = np.linalg.svd(x_data, full_matrices = False)
+        if isinstance(data, list):
+            data = get_matrix(data)
+        U, s, v = np.linalg.svd(data, full_matrices = False)
         self.matrix_representation = U[:, :self.n_dim]
         return 
         
@@ -57,4 +58,7 @@ class LinearChart:
                     "No projection set for LinearChart. Provide a matrix representation or call .fit() first"
                 )
             )
-        return [np.matmul( self.matrix_representation.T, data_i) for data_i in data]
+        if isinstance(data, list): # want this to work for a single datamatrix and for a list of trajectories
+            return [np.matmul( self.matrix_representation.T, data_i) for data_i in data]
+        else:
+            return np.matmul( self.matrix_representation.T, data)

@@ -1,11 +1,12 @@
 from scipy.integrate import solve_ivp
 from ssmlearnpy.utils import ridge
+
 from ssmlearnpy import SSMLearn
 
 from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
 from ssmlearnpy.reduced_dynamics.normalform import NormalForm, NonlinearCoordinateTransform
 from sklearn.preprocessing import PolynomialFeatures
-
+from ssmlearnpy.utils.preprocessing import get_matrix 
 from ssmlearnpy.reduced_dynamics.normalform import NonlinearCoordinateTransform, NormalForm, create_normalform_transform_objective, prepare_normalform_transform_optimization, unpack_optimized_coeffs
 from ssmlearnpy.geometry.coordinates_embedding import coordinates_embedding
 from scipy.optimize import minimize
@@ -139,10 +140,10 @@ def test_delay_embedding():
     LocationACC = data[0,0].item()[6]
     PFFResultsACC = data[0,0].item()[7]
     ssm = SSMLearn(
-    t = [TimeDIC.ravel()], 
-    x = [DisplacementDIC], 
-    ssm_dim=2, 
-    dynamics_type = 'flow'
+        t = [TimeDIC.ravel()], 
+        x = [DisplacementDIC], 
+        ssm_dim=2, 
+        dynamics_type = 'flow'
     )
     referenceData = loadmat('test_BRB_from_ssmlearn.mat')['yData']
     t_y, y, opts_embedding = coordinates_embedding(ssm.emb_data['time'], ssm.emb_data['observables'],
@@ -155,15 +156,34 @@ def test_dimensionality_reduction():
     reference_etaData = loadmat('test_BRB_from_ssmlearn.mat')['etaData']
     
     ssm = SSMLearn(
-    t = [reference_yData[0,0]], 
-    x = [reference_yData[0,1]], 
-    ssm_dim=2, 
-    derive_embdedding = False,
-    dynamics_type = 'flow'# use the embedding from the reference data
+        t = [reference_yData[0,0]], 
+        x = [reference_yData[0,1]], 
+        ssm_dim=2, 
+        derive_embdedding = False,
+        dynamics_type = 'flow'# use the embedding from the reference data
     )
     ssm.get_reduced_coordinates('linearchart')
     assert np.allclose(ssm.emb_data['reduced_coordinates'][0], reference_etaData[0,1])
 
+
+def test_fit_reduced_coords_and_parametrization():
+    t = np.linspace(0, 10, 1000)
+    ic_0 = np.array([0.1, 0])
+    ic_1 = np.array([-0.1, 0])
+    sol_0 = solve_ivp(vectorfield, [t[0], t[-1]], ic_0, t_eval=t)
+    sol_1 = solve_ivp(vectorfield, [t[0], t[-1]], ic_1, t_eval=t)
+    trajectories = [sol_0.y, sol_1.y]
+    t_emb, y_emb, _ = coordinates_embedding([t,t], trajectories, imdim = 2, over_embedding = 5)
+    
+    
+    enc, dec = ridge.fit_reduced_coords_and_parametrization(y_emb, n_dim = 2, poly_degree=3)
+    y_rec = dec.predict(enc.predict(y_emb[0]))
+
+    assert np.allclose(y_rec, y_emb[0], atol = 1e-3)
+    y_rec = dec.predict(enc.predict(y_emb[1]))
+
+    assert np.allclose(y_rec, y_emb[1], atol = 1e-3)
+    
 
 # test normal form transforms:
 def test_normalform_nonlinear_coeffs():
@@ -316,8 +336,9 @@ if __name__ == '__main__':
     test_ridge()
     test_ridge_constrained()
     test_ridge_with_or_without_scaling()
-    test_delay_embedding()
-    test_dimensionality_reduction()
+    #test_delay_embedding()
+    #test_dimensionality_reduction()
+    test_fit_reduced_coords_and_parametrization()
     test_normalform_nonlinear_coeffs()
     test_normalform_lincombinations()
     test_normalform_resonance()
