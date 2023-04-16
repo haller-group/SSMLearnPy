@@ -1,6 +1,24 @@
 from sklearn.preprocessing import PolynomialFeatures
 import numpy as np
 
+
+class PolynomialFeaturesWithPattern(PolynomialFeatures):
+    def __init__(self, degree=2, interaction_only=False, include_bias=True, structure=None):
+        super().__init__(degree=degree, interaction_only=interaction_only, include_bias=include_bias)
+        self.structure = structure
+
+    def fit(self, X, y=None):
+        super().fit(X, y)
+        return self
+    def transform(self, X, y=None):
+        transformed = super().transform(X)
+        return transformed[:, self.structure]
+    
+    def fit_transform(self, X, y=None):
+        super().fit_transform(X, y)
+        return super().transform(X)[:, self.structure]
+
+
 def complex_polynomial_features(y, degree = 3, skip_linear = False, structure = None, include_bias = False):
     """
     This is a hack because PolynomialFeatures does not support complex data.

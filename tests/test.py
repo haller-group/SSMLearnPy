@@ -6,7 +6,7 @@ from ssmlearnpy import SSMLearn
 from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
 from ssmlearnpy.reduced_dynamics.normalform import NormalForm, NonlinearCoordinateTransform
 from sklearn.preprocessing import PolynomialFeatures
-from ssmlearnpy.utils.preprocessing import get_matrix 
+from ssmlearnpy.utils.preprocessing import get_matrix , PolynomialFeaturesWithPattern
 from ssmlearnpy.reduced_dynamics.normalform import NonlinearCoordinateTransform, NormalForm, create_normalform_transform_objective, prepare_normalform_transform_optimization, unpack_optimized_coeffs
 from ssmlearnpy.geometry.coordinates_embedding import coordinates_embedding
 from scipy.optimize import minimize
@@ -23,11 +23,11 @@ def test_differentiation():
     assert np.allclose(X, y)
      
 
-def vectorfield(t,x):
+def vectorfield(t,x, r = 1):
     # needed to test regression
     # damped duffing oscillator with fixed points at x=0 and x=+/-1.
     # x[0] is position, x[1] is velocity
-    return np.array([x[1], x[0]-x[0]**3 - 0.1*x[1]])
+    return np.array([x[1], x[0]-r*x[0]**3 - 0.1*x[1]])
 
 def test_ridge():
     # Generate data to fit the model (actual trajcetories)
@@ -185,6 +185,44 @@ def test_fit_reduced_coords_and_parametrization():
     assert np.allclose(np.matmul(linear_coeff.T, linear_coeff), np.eye(2))
     assert np.allclose(np.matmul(linear_coeff.T, nonlinear_coeff), np.zeros((2, nonlinear_coeff.shape[1])))
 
+
+def test_polynomial_features_pattern():
+    ## original_polyFeatures:
+    #print(pf.powers_[pattern,:])
+    X = np.random.rand(10,2)
+    pf = PolynomialFeatures(degree=3, include_bias=False).fit(X)
+    pattern = np.logical_or(np.logical_and(pf.powers_[:,0]==2, pf.powers_[:,1]==1), np.logical_and(pf.powers_[:,0]==1, pf.powers_[:,1]==2))
+    # only include x**2 y or x * y**2 terms
+    pf2 = PolynomialFeaturesWithPattern(degree =3, include_bias = False, structure = pattern)
+    transformed = pf2.fit_transform(X)
+    control = np.vstack((X[:,0]**2 * X[:,1], X[:,0] * X[:,1]**2)).T
+    assert np.allclose(control, transformed)
+
+#import matplotlib.pyplot as plt
+def test_get_fit_ridge_parametric():
+    ## z = x**2 + 2x*r + r**2 * y
+    Rs = [np.array([0]).reshape(-1,1), np.array([1]).reshape(-1,1), np.array([2]).reshape(-1,1)]
+    Zs = []
+    Xs = []
+    for r in Rs:
+        xs = np.random.rand(100)
+        ys = np.random.rand(100)
+        X, Y = np.meshgrid(xs, ys)
+        points = np.vstack((X.ravel(), Y.ravel()))
+        z = points[0,:]**2 + 2*points[0,:]*r + r**2 * points[1,:]
+        Zs.append(z)
+        Xs.append(points)
+    mdl = ridge.get_fit_ridge_parametric(Xs, Zs, Rs, poly_degree = 4, origin_remains_fixed=True, poly_degree_parameter=2, do_scaling=False)
+    for i,r in enumerate(Rs):
+        XX = np.vstack((Xs[i], r*np.ones((1, Xs[0].shape[1]))))
+        yy = mdl.predict(XX.T)
+        #print(np.max(np.abs(yy - Zs[i].T)))
+        assert np.allclose(yy, Zs[i].T)
+    #     plt.figure()
+    #     plt.plot(Zs[i].T, Zs[i].T, '-')
+    #     plt.plot(Zs[i].T, yy, '.')
+    # plt.show()
+
 # test normal form transforms:
 def test_normalform_nonlinear_coeffs():
     linearpart = np.ones((2,2))
@@ -337,10 +375,13 @@ if __name__ == '__main__':
     test_ridge_with_or_without_scaling()
     #test_delay_embedding()
     #test_dimensionality_reduction()
-    test_fit_reduced_coords_and_parametrization()
+    test_polynomial_features_pattern()
+    #test_fit_reduced_coords_and_parametrization()
+    test_get_fit_ridge_parametric()
     test_normalform_nonlinear_coeffs()
     test_normalform_lincombinations()
     test_normalform_resonance()
+
     #test_nonlinear_change_of_coords()
     #test_prepare_normalform_transform_optimization()
     #test_normalform_transform()

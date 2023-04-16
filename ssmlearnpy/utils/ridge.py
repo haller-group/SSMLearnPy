@@ -8,7 +8,7 @@ from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import Ridge
 from sklearn.linear_model import RidgeCV
-from ssmlearnpy.utils.preprocessing import get_matrix
+from ssmlearnpy.utils.preprocessing import get_matrix, generate_exponents, PolynomialFeaturesWithPattern
 from ssmlearnpy.geometry.dimensionality_reduction import LinearChart
 from ssmlearnpy.utils.preprocessing import complex_polynomial_features, generate_exponents, compute_polynomial_map
 from typing import NamedTuple
@@ -43,7 +43,7 @@ def get_fit_ridge(
         mdl: sklearn Pipeline object containing a PolynomialFeatures,
                  an optional StandardScaler, and Ridge regression 
     """    
-    if(isinstance(X, list)):
+    if isinstance(X, list):
         logger.info("Transforming data")
         X = get_matrix(X)
         y = get_matrix(y)
@@ -83,18 +83,12 @@ def get_fit_ridge(
         )
     # explicitly set sample weights to 1 in case we have constraints
     sample_weight = np.ones(X.shape[1])
-        
+    
     logger.info("Fitting regression model")
     if constraints is not None:
         # if we have constraints, add them to X and y with a large weight
-        constLHS, constRHS = constraints
-        for l, r in zip(constLHS, constRHS):
-            lhs = np.array(l).reshape(-1,1)
-            rhs = np.array(r).reshape(-1,1)
-            X = np.append(X, lhs, axis = 1)
-            y = np.append(y, rhs, axis = 1)
-        sample_weight = np.ones(X.shape[1])
-        sample_weight[-len(constLHS):] = 1e10
+        logger.info("Adding constraints to regression model")
+        X, y, sample_weight = add_constraints(X, y, constraints, sample_weight, weight=1e10)
 
     mdl.fit(X.T, y.T, ridge_regressor__sample_weight = sample_weight)
     mdl.map_info = {}
@@ -111,6 +105,121 @@ def get_fit_ridge(
     return mdl
 
 
+
+
+def get_fit_ridge_parametric(
+    X, 
+    y,
+    parameters,
+    origin_remains_fixed: bool = False,
+    constraints: list = None,
+    do_scaling: bool = True,
+    poly_degree: int=2,
+    poly_degree_parameter: int=2,
+    fit_intercept: bool=False,
+    alpha: list=0,
+    cv: int=2
+):
+    """Fit a ridge regression model to the data, with parameter-dependent coefficients
+    Here X and y must be lists of trajectories.
+    Parameters:
+        X: (n_features, n_samples) or list 
+        y: (n_outputs, n_samples) or list 
+        parameters: list of parameters for each trajectory. 
+                    Each element should look like (n_parameters, n_samples) or (n_parameters,1). 
+        origin_remains_fixed: bool. If True, then the regression will not contain terms that depend only on the parameter. 
+                                otherwise the parameter is simply treated as an additional feature. 
+        constraints: list of lists: [LHS, RHS] such that model.predict(LHS[i]) == RHS[i].
+                 model.predict(LHS[i]) and RHS[i] should have the same shape. 
+                 As a result, the last entries in LHS[i] should refer to the parameters.
+        do_scaling: bool, whether to apply a StandardScaler to the data before fitting
+        poly_degree: int, degree (with respect to the state) of the polynomial to fit
+        poly_degree_parameter: int, degree of the polynomial to fit for the parameters. 
+                            In general, poly_degree_parameter != poly_degree, but it should be at most poly_degree.
+        fit_intercept: bool, whether to include the constant term in the regression
+                        if False, this means that the model will be forced to pass through the origin
+        alpha: float or list of floats, regularization parameter
+        cv: int, number of folds for cross validation. If cv>=2, alpha must be a list
+    Returns:
+        mdl: sklearn Pipeline object containing a PolynomialFeaturesWithPattern,
+                 an optional StandardScaler, and Ridge regression. 
+    """   
+    if isinstance(X, list):
+        logger.info("Transforming data")
+        if parameters[0].shape[1] == X[1].shape[1]: # we have a parameter for each sample
+            X = get_matrix(X)
+            y = get_matrix(y)
+            parameters = get_matrix(parameters)
+        else:
+            parameters = [np.tile(p, X[0].shape[1]) for p in parameters]
+            parameters = get_matrix(parameters)
+            X = get_matrix(X)
+            y = get_matrix(y)
+        X_and_params = np.append(X, parameters, axis = 0)
+
+    else: 
+        raise NotImplementedError("X and y must be lists of trajectories")
+    logger.debug(f"X shape: {X.shape}, y shape: {y.shape}, parameters shape: {parameters.shape}")
+    n_features = X.shape[0]
+    n_params = parameters.shape[0]
+
+    if cv>=2 and isinstance(alpha, list):
+        raise NotImplementedError("CV not implemented for parametric regression")
+    regressor = Ridge(
+            fit_intercept=fit_intercept,
+            alpha=alpha
+            )
+    
+    # decide which features to include in the regression: 
+    structure = None
+    if origin_remains_fixed:
+        exponents = generate_exponents(n_features+n_params, degree = poly_degree, include_bias=False).T # transpose back to the PolyFeatures format
+        # the parameters were inserted at the end of the vector 
+        contains_state_dependent = np.logical_or(*[exponents[:,i] for i in range(n_features)]) # if any of the state features has a nonzero exponent ~ logical_or
+
+        degree_of_parameter = np.array([exponents[:,i] for i in range(n_features, n_features+n_params)])[0,:]
+        if n_params > 1:
+            degree_of_parameter = np.sum(at_most_degree_param, axis = 1)
+        at_most_degree_param = degree_of_parameter <= poly_degree_parameter # if the sum of the exponents of the parameters is at most poly_degree_parameter
+        structure = np.logical_and(contains_state_dependent, at_most_degree_param)
+        logger.debug(f"Number of features to include: {np.sum(structure)}")
+    if do_scaling: # default is to include a standard scaler
+        mdl = Pipeline(
+            [
+                ('poly_transf', PolynomialFeaturesWithPattern(degree=poly_degree, include_bias=False, structure=structure)),
+                ('scaler', StandardScaler(with_mean=False)),
+                ('ridge_regressor', regressor)
+            ]
+        )
+    else:
+        mdl = Pipeline(
+            [
+                ('poly_transf', PolynomialFeaturesWithPattern(degree=poly_degree, include_bias=False, structure=structure)),
+                ('ridge_regressor', regressor)
+            ]
+        )
+
+    sample_weight = np.ones(X_and_params.shape[1])
+    #print(X_and_params.T.shape, y.T.shape, sample_weight.shape)
+
+    if constraints is not None:
+        # if we have constraints, add them to X and y with a large weight
+        logger.info("Adding constraints to regression model")
+        X_and_params, y, sample_weight = add_constraints(X_and_params, y, constraints, sample_weight, weight=1e10)
+    #print(X_and_params.T.shape, y.T.shape, sample_weight.shape)
+
+    mdl.fit(X_and_params.T, y.T, ridge_regressor__sample_weight = sample_weight)
+    mdl.map_info = {}
+    map_coefs = np.zeros(mdl.named_steps.ridge_regressor.coef_.shape)
+    if do_scaling:
+        scaler_coefs = mdl.named_steps.scaler.scale_
+    else:
+        scaler_coefs = np.ones(map_coefs.shape[1])
+    
+    map_coefs = mdl.named_steps.ridge_regressor.coef_ / scaler_coefs
+    mdl.map_info['coefficients'] = map_coefs
+    mdl.map_info['exponents'] = mdl.named_steps.poly_transf.powers_
+    return mdl
 
 
 def fit_reduced_coords_and_parametrization(
@@ -215,3 +324,15 @@ class Decoder(NamedTuple): # to behave in the same way as the pipeline object ge
     predict : callable
     map_info : dict
     fit = None
+
+
+def add_constraints(X, y, constraints, sample_weight, weight=1e10):
+    constLHS, constRHS = constraints
+    for l, r in zip(constLHS, constRHS):
+        lhs = np.array(l).reshape(-1,1)
+        rhs = np.array(r).reshape(-1,1)
+        X = np.append(X, lhs, axis = 1)
+        y = np.append(y, rhs, axis = 1)
+    sample_weight = np.ones(X.shape[1])
+    sample_weight[-len(constLHS):] = weight
+    return X, y, sample_weight
