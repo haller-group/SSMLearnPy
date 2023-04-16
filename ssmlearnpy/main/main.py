@@ -11,7 +11,7 @@ from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differen
 from ssmlearnpy.reduced_dynamics.advector import advect
 
 from ssmlearnpy.utils.compute_errors import compute_errors
-from ssmlearnpy.utils.ridge import get_fit_ridge, fit_reduced_coords_and_parametrization
+from ssmlearnpy.utils.ridge import get_fit_ridge, fit_reduced_coords_and_parametrization, get_fit_ridge_parametric
 from ssmlearnpy.utils.ridge import get_matrix
 from ssmlearnpy.utils.file_handler import get_vectors
 from ssmlearnpy.utils.plots import compute_surface
@@ -120,10 +120,17 @@ class SSMLearn:
         **regression_args
     ) -> None:
         if self.emb_data['reduced_coordinates'] is not None: # reduced coordinates have been precomputed
-            self.decoder = get_fit_ridge(
-                self.emb_data['reduced_coordinates'],
-                self.emb_data['observables'],
-                **regression_args)
+            if self.emb_data['params'] is not None:
+                self.decoder = get_fit_ridge_parametric(
+                        self.emb_data['reduced_coordinates'],
+                        self.emb_data['observables'],
+                        self.emb_data['params'],
+                        **regression_args)
+            else:
+                self.decoder = get_fit_ridge(
+                        self.emb_data['reduced_coordinates'],
+                        self.emb_data['observables'],
+                        **regression_args)
         else:
             self.encoder, self.decoder = fit_reduced_coords_and_parametrization(self.emb_data['observables'],
                                                                                  self.ssm_dim, **regression_args) # get both decoder and encoder
@@ -168,11 +175,19 @@ class SSMLearn:
             self.emb_data['time'], 
             self.dynamics_type
         )
-        self.reduced_dynamics = get_fit_ridge(
-            X,
-            y,
-            **regression_args
-        )
+        if self.emb_data['params'] is not None:
+            self.reduced_dynamics = get_fit_ridge_parametric(
+                X,
+                y,
+                self.emb_data['params'],
+                **regression_args
+            )
+        else:
+            self.reduced_dynamics = get_fit_ridge(
+                X,
+                y,
+                **regression_args
+            )
         lin_part = self.reduced_dynamics.map_info['coefficients'][:,:X[0].shape[0]]
         d, v = np.linalg.eig(lin_part)
         self.reduced_dynamics.map_info['eigenvalues_lin_part'] = d

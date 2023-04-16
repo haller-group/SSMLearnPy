@@ -49,7 +49,7 @@ class Plot:
         if bool(dict_margin) == False:
             plt_margins = plt_width / 20
             dict_margin = dict(l=plt_margins, r=plt_margins, b=plt_margins, t=plt_margins)
-        if bool(x) == False:
+        if bool(x) is False:
             plt_labels[1] = self.plt_labels[data_name]    
             if idx_trajectories == 0:
                 t_to_plot = SSM.emb_data['time']
@@ -59,8 +59,8 @@ class Plot:
                 x_to_plot = [SSM.emb_data[data_name][i] for i in idx_trajectories]
             if data_type == 'errors':
                 with_predictions = True
-            if with_predictions == True:
-                if bool(SSM.predictions) == False:
+            if with_predictions is True:
+                if bool(SSM.predictions) is False:
                     SSM.predict(idx_trajectories)    
                 if type_predictions == 'dynamics':  
                     if idx_trajectories == 0:
@@ -143,7 +143,7 @@ class Plot:
             y_label = plt_labels[1] + '<sub>' + str(idx_coordinates[1]) + '</sub>'   
 
         if len(idx_coordinates) == 3: 
-            if add_surface == True:    
+            if add_surface is True:    
                 surface_dict = SSM.get_surface(
                     idx_reduced_coordinates = [1, 2],
                     idx_observables = idx_coordinates,
@@ -154,7 +154,7 @@ class Plot:
             else:
                 surface_dict = {}
             z_plot = [x_to_plot[i][idx_coordinates[2]-1,:] for i in range(len(x_to_plot))]
-            if with_predictions == True:
+            if with_predictions is True:
                 z_pred_plot = [x_pred_to_plot[i][idx_coordinates[2]-1,:] for i in range(len(x_pred_to_plot))]
             else:
                 z_pred_plot = []    

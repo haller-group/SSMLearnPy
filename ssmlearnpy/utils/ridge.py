@@ -111,7 +111,7 @@ def get_fit_ridge_parametric(
     X, 
     y,
     parameters,
-    origin_remains_fixed: bool = False,
+    origin_remains_fixed: bool = True,
     constraints: list = None,
     do_scaling: bool = True,
     poly_degree: int=2,
@@ -151,12 +151,11 @@ def get_fit_ridge_parametric(
             y = get_matrix(y)
             parameters = get_matrix(parameters)
         else:
-            parameters = [np.tile(p, X[0].shape[1]) for p in parameters]
+            parameters = [np.tile(p, X[i].shape[1]) for i,p in enumerate(parameters)]
             parameters = get_matrix(parameters)
             X = get_matrix(X)
             y = get_matrix(y)
         X_and_params = np.append(X, parameters, axis = 0)
-
     else: 
         raise NotImplementedError("X and y must be lists of trajectories")
     logger.debug(f"X shape: {X.shape}, y shape: {y.shape}, parameters shape: {parameters.shape}")
@@ -171,11 +170,15 @@ def get_fit_ridge_parametric(
             )
     
     # decide which features to include in the regression: 
-    structure = None
+    exponents = generate_exponents(n_features+n_params, degree = poly_degree, include_bias=False).T # transpose back to the PolyFeatures format
+    structure = True * exponents[:,0]
+
     if origin_remains_fixed:
-        exponents = generate_exponents(n_features+n_params, degree = poly_degree, include_bias=False).T # transpose back to the PolyFeatures format
         # the parameters were inserted at the end of the vector 
-        contains_state_dependent = np.logical_or(*[exponents[:,i] for i in range(n_features)]) # if any of the state features has a nonzero exponent ~ logical_or
+        if n_features == 1:
+            contains_state_dependent = exponents[:,0]
+        else:
+            contains_state_dependent = np.logical_or(*[exponents[:,i] for i in range(n_features)]) # if any of the state features has a nonzero exponent ~ logical_or
 
         degree_of_parameter = np.array([exponents[:,i] for i in range(n_features, n_features+n_params)])[0,:]
         if n_params > 1:
@@ -200,13 +203,11 @@ def get_fit_ridge_parametric(
         )
 
     sample_weight = np.ones(X_and_params.shape[1])
-    #print(X_and_params.T.shape, y.T.shape, sample_weight.shape)
 
     if constraints is not None:
         # if we have constraints, add them to X and y with a large weight
         logger.info("Adding constraints to regression model")
         X_and_params, y, sample_weight = add_constraints(X_and_params, y, constraints, sample_weight, weight=1e10)
-    #print(X_and_params.T.shape, y.T.shape, sample_weight.shape)
 
     mdl.fit(X_and_params.T, y.T, ridge_regressor__sample_weight = sample_weight)
     mdl.map_info = {}
@@ -267,7 +268,7 @@ def fit_reduced_coords_and_parametrization(
         constraint_linear = (linear_coefs.T @ linear_coefs - np.eye(n_features)).ravel()
         constraint_nonlinear = (linear_coefs.T @ nonlinear_coefs).ravel()
         Error = np.concatenate((Error, np.sqrt(penalty_linear_cons) * constraint_linear, np.sqrt(penalty_nonlinear_cons) * constraint_nonlinear))
-        return  Error / X.shape[1]# + multiplier1 * constraint1 + multiplier2 * constraint2
+        return  Error / X.shape[1]
     # These are implemented as soft-constraints. 
     # TODO: implement as hard constraints (e.g. with SLSQP)
     # TODO: Much slower than matlab. Possibly precalculating the Jacobian will help. 
