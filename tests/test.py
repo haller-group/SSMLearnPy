@@ -174,23 +174,22 @@ def test_fit_reduced_coords_and_parametrization():
     sol_1 = solve_ivp(vectorfield, [t[0], t[-1]], ic_1, t_eval=t)
     trajectories = [sol_0.y, sol_1.y]
     t_emb, y_emb, _ = coordinates_embedding([t,t], trajectories, imdim = 2, over_embedding = 5)
-    
-    
     enc, dec = ridge.fit_reduced_coords_and_parametrization(y_emb, n_dim = 2, poly_degree=3)
     y_rec = dec.predict(enc.predict(y_emb[0]))
-
     assert np.allclose(y_rec, y_emb[0], atol = 1e-3)
     y_rec = dec.predict(enc.predict(y_emb[1]))
-
     assert np.allclose(y_rec, y_emb[1], atol = 1e-3)
-    
+    # check the contraints:
+    linear_coeff = enc.matrix_representation
+    nonlinear_coeff = dec.map_info['coefficients'][:, 2:]
+    assert np.allclose(np.matmul(linear_coeff.T, linear_coeff), np.eye(2))
+    assert np.allclose(np.matmul(linear_coeff.T, nonlinear_coeff), np.zeros((2, nonlinear_coeff.shape[1])))
 
 # test normal form transforms:
 def test_normalform_nonlinear_coeffs():
     linearpart = np.ones((2,2))
     nf = NormalForm(linearpart)
     nonlinear_coeffs = nf._nonlinear_coeffs(degree = 3)
-
     truecoeffs = np.array([[2, 1, 0, 3, 2, 1, 0], [0, 1, 2, 0, 1, 2, 3]])
     assert np.all(nonlinear_coeffs == truecoeffs)
 

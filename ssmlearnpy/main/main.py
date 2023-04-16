@@ -124,8 +124,9 @@ class SSMLearn:
                 self.emb_data['reduced_coordinates'],
                 self.emb_data['observables'],
                 **regression_args)
-        else: 
-            self.encoder, self.decoder = fit_reduced_coords_and_parametrization() # get both decoder and encoder
+        else:
+            self.encoder, self.decoder = fit_reduced_coords_and_parametrization(self.emb_data['observables'],
+                                                                                 self.ssm_dim, **regression_args) # get both decoder and encoder
             self.emb_data['reduced_coordinates'] = [self.encoder.predict(trajectory)
                                                      for trajectory in self.emb_data['observables']]
     def get_surface(
@@ -184,7 +185,7 @@ class SSMLearn:
         x = [],
         x_reduced = []
     ) -> None:
-        if bool(t) == False:
+        if bool(t) is False:
             if idx_trajectories == 0:
                 t_to_predict = self.emb_data['time']
                 x_reduced = self.emb_data['reduced_coordinates']
@@ -209,7 +210,7 @@ class SSMLearn:
             self.geometry_predictions['observables'] = x_predict
             self.geometry_predictions['errors'] = prediction_errors
         else:
-            if bool(x_reduced) == False:
+            if bool(x_reduced) is False:
                 x_reduced = encode_geometry(
                 self.encoder.predict,
                 x)  
@@ -236,18 +237,18 @@ class SSMLearn:
         t = [],
         x_reduced = []
     ) -> None:
-        if bool(t) == False:
+        if bool(t) is False:
             if idx_trajectories == 0:
                 t_to_predict = self.emb_data['time']
                 x_to_predict = self.emb_data['reduced_coordinates']
             else:
                 t_to_predict = [self.emb_data['time'][i] for i in idx_trajectories]
-                x_to_predict = [self.emb_data['reduced_coordinates'][i] for i in idx_trajectories] 
+                x_to_predict = [self.emb_data['reduced_coordinates'][i] for i in idx_trajectories]
             
             t_predict, x_predict  = advect(
-                dynamics=self.reduced_dynamics.predict, 
-                t=t_to_predict, 
-                x=x_to_predict, 
+                dynamics=self.reduced_dynamics.predict,
+                t=t_to_predict,
+                x=x_to_predict,
                 dynamics_type=self.dynamics_type
             )
 
@@ -262,9 +263,9 @@ class SSMLearn:
             self.reduced_dynamics_predictions['errors'] = prediction_errors
         else:
             t_predict, x_predict  = advect(
-                dynamics=self.reduced_dynamics.predict, 
-                t=t, 
-                x=x_reduced, 
+                dynamics=self.reduced_dynamics.predict,
+                t=t,
+                x=x_reduced,
                 dynamics_type=self.dynamics_type
             )
 
@@ -287,7 +288,7 @@ class SSMLearn:
         x = [],
         x_reduced = []
     ) -> None:
-        if bool(t) == False:
+        if bool(t) is False:
             if idx_trajectories == 0:
                 t_to_predict = self.emb_data['time']
                 x_to_predict = self.emb_data['observables']
@@ -295,11 +296,11 @@ class SSMLearn:
                 t_to_predict = [self.emb_data['time'][i] for i in idx_trajectories]
                 x_to_predict = [self.emb_data['observables'][i] for i in idx_trajectories]
 
-            if bool(self.geometry_predictions) == False:
-                self.predict_geometry(idx_trajectories) 
+            if bool(self.geometry_predictions) is False:
+                self.predict_geometry(idx_trajectories)
 
-            if bool(self.reduced_dynamics_predictions) == False:
-                self.predict_reduced_dynamics(idx_trajectories)   
+            if bool(self.reduced_dynamics_predictions) is False:
+                self.predict_reduced_dynamics(idx_trajectories)
 
             x_predict = decode_geometry(
                 self.decoder.predict,

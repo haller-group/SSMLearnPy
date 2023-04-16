@@ -12,7 +12,7 @@ from ssmlearnpy.utils.preprocessing import get_matrix
 from ssmlearnpy.geometry.dimensionality_reduction import LinearChart
 from ssmlearnpy.utils.preprocessing import complex_polynomial_features, generate_exponents, compute_polynomial_map
 from typing import NamedTuple
-from scipy.optimize import minimize
+from scipy.optimize import minimize, least_squares
 
 logger = logging.getLogger("ridge_regression")
 
@@ -88,14 +88,13 @@ def get_fit_ridge(
     if constraints is not None:
         # if we have constraints, add them to X and y with a large weight
         constLHS, constRHS = constraints
-        for i in range(len(constLHS)):
-            lhs = np.array(constLHS[i]).reshape(-1,1)
-            rhs = np.array(constRHS[i]).reshape(-1,1)
+        for l, r in zip(constLHS, constRHS):
+            lhs = np.array(l).reshape(-1,1)
+            rhs = np.array(r).reshape(-1,1)
             X = np.append(X, lhs, axis = 1)
             y = np.append(y, rhs, axis = 1)
         sample_weight = np.ones(X.shape[1])
         sample_weight[-len(constLHS):] = 1e10
-        
 
     mdl.fit(X.T, y.T, ridge_regressor__sample_weight = sample_weight)
     mdl.map_info = {}
@@ -121,20 +120,22 @@ def fit_reduced_coords_and_parametrization(
     fit_intercept: bool=False,
     alpha: list=0,
     cv: int=2,
-    initial_guess = None, 
+    initial_guess = None,
+    penalty_linear_cons =1e-5,
+    penalty_nonlinear_cons =1e-5,
     **optimize_kwargs
-):  
+):
     """
         X: (n_features, n_samples) or list
     """
-    if(isinstance(X, list)):
+    if isinstance(X, list):
         logger.info("Transforming data")
         X = get_matrix(X)    
     logger.debug(f"X shape: {X.shape}")
     n_targets = X.shape[0]
     n_features = n_dim
     n_linear_coefs = n_targets * n_features # n_samples * n_features
-    
+
     if initial_guess is None:
         # compute initial guess: projection matrix from svd
         # and nonlinear coefficients from ridge regression
@@ -147,31 +148,36 @@ def fit_reduced_coords_and_parametrization(
         X_reduced = np.matmul(linear_coefs.T, X) # projection
         Error_linear = X - np.matmul(linear_coefs, X_reduced) # linear prediction
 
-        nonlinear_features = complex_polynomial_features(X_reduced, degree = poly_degree, skip_linear = True) # have to exclude the linear features here
+        nonlinear_features = complex_polynomial_features(X_reduced, degree = poly_degree, skip_linear = True) # have to exclude the linear features
         Error = Error_linear - np.matmul(nonlinear_coefs, nonlinear_features)
-        Error = np.linalg.norm(Error)**2
+        #Error = np.linalg.norm(Error)**2
+        Error = Error.ravel()
         if alpha is not None:  # ridge regularization
-            Error += alpha * np.linalg.norm(z)**2
-        return Error / X.shape[1]
+            Error = np.concatenate((Error, np.sqrt(alpha) *z))
+        # add constraints as penalty terms:
+        constraint_linear = (linear_coefs.T @ linear_coefs - np.eye(n_features)).ravel()
+        constraint_nonlinear = (linear_coefs.T @ nonlinear_coefs).ravel()
+        Error = np.concatenate((Error, np.sqrt(penalty_linear_cons) * constraint_linear, np.sqrt(penalty_nonlinear_cons) * constraint_nonlinear))
+        return  Error / X.shape[1]# + multiplier1 * constraint1 + multiplier2 * constraint2
+    # These are implemented as soft-constraints. 
+    # TODO: implement as hard constraints (e.g. with SLSQP)
+    # TODO: Much slower than matlab. Possibly precalculating the Jacobian will help. 
     if optimize_kwargs is None:
-        optimize_kwargs = {'method': 'BFGS', 'tol': 1e-3, 'options': {'disp': False}}
-    res = minimize(compute_error, initial_guess, **optimize_kwargs)
-    logger.debug(f"Optimization terminated: {res.success}")
-
+        optimize_kwargs = {'method': 'lm', 'maxfev': 1e5, 'ftol': 1e-6, 'gtol':1e-6, 'verbose': 0}
+    res = least_squares(compute_error, initial_guess, **optimize_kwargs) # we can use the special sturcutre of the loss and use scipy.optimize.least_suqares()
+    logger.debug(f"Optimization terminated. Success: {res.success}")
     optimal_linear_coef, optimal_nonlinear_coef = unpack_linear_nonlinear_coefficients(res.x, n_linear_coefs, n_features, n_targets)
     encoder = LinearChart(
         n_dim,
         matrix_representation = optimal_linear_coef
         )
-
     joint_coefs = np.concatenate((optimal_linear_coef, optimal_nonlinear_coef), axis=1) 
     powers = generate_exponents(n_features, poly_degree)
 
     decoder = Decoder(
-        compute_polynomial_map(joint_coefs, poly_degree), 
+        compute_polynomial_map(joint_coefs, poly_degree), # callable function
         {'coefficients': joint_coefs, 'exponents': powers}
         )
-
     return encoder, decoder
 
 
@@ -188,9 +194,9 @@ def generate_initial_guess(
     Lc.fit(X)
     X_reduced = Lc.predict(X)
     initial_model = get_fit_ridge(X_reduced, X, do_scaling=False, poly_degree=poly_degree, fit_intercept=fit_intercept, alpha=alpha, cv=cv)
-    # discard the linear part of the ridge model: 
+    # discard the linear part of the ridge model:
     ridge_nonlinear_coeffs = initial_model.map_info['coefficients'][:, n_dim:]
-    initial_guess = np.concatenate([ Lc.matrix_representation.ravel(), ridge_nonlinear_coeffs.ravel() ]) # 
+    initial_guess = np.concatenate([ Lc.matrix_representation.ravel(), ridge_nonlinear_coeffs.ravel()]) 
     return initial_guess
 
 def unpack_linear_nonlinear_coefficients(
