@@ -78,7 +78,7 @@ class NonlinearCoordinateTransform():
             raise RuntimeError(
                 "The transformation coefficients have not been set")
         # transpose again to get the output in the right shape
-        return self.transform_map(z)
+        return self.transform_map(z.T)
 
     def inverse_transform(self, z):
         """
@@ -91,7 +91,7 @@ class NonlinearCoordinateTransform():
         if self.inverse_transform_coefficients is None:
             raise RuntimeError(
                 "The inverse transformation coefficients have not been set")
-        return self.inverse_transform_map(z)
+        return self.inverse_transform_map(z.T)
 
 
 class NormalForm:
@@ -419,10 +419,10 @@ def wrap_optimized_coefficients(ndofs, normalform, degree, optimized_coefficient
     dynamics['exponents'] = generate_exponents(2 * ndofs, degree)
 
     def vectorfield(t, x):
-        xeval = x.reshape(-1, 1)
-        evaluation = compute_polynomial_map(coeff_dynamics, degree)(xeval)
+        xeval = x.reshape(1,-1)
+        evaluation = compute_polynomial_map(coeff_dynamics, degree)(xeval).T
         # need to reshape this for the complex_polynomial_features function
-        return insert_complex_conjugate(evaluation).reshape(1, -1)
+        return insert_complex_conjugate(evaluation)[:,0]
     dynamics['vectorfield'] = vectorfield
     return NonlinearCoordinateTransform(
                                         2*ndofs,

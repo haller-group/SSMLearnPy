@@ -98,16 +98,24 @@ def compute_polynomial_map(
     if linear_transform is not None:
         ndofs = int(linear_transform.shape[0] / 2)
         def linear_transform_first(x):
-            y = np.matmul(linear_transform, x)
+            # the transposes are necessary because a ridge model expects a matrix of shape (n_samples, n_features)
+            # because of the projection we need x to be (n_features, n_samples).
+            # in order to also produce a matrix of shape (n_samples, n_features), we need to transpose a lot. 
+            # TODO: probably there is a smarter way
+            y = np.matmul(linear_transform, x) 
             y_features = complex_polynomial_features(y.T, degree=degree, 
                                                              include_bias = include_bias,
-                                                             skip_linear = skip_linear).T
-            first_half = np.matmul(coefficients, y_features)
-            return insert_complex_conjugate(first_half)
+                                                             skip_linear = skip_linear)
+
+            #y_features = y_features[:, :ndofs]
+            first_half = np.matmul(coefficients, y_features.T)
+
+            return insert_complex_conjugate(first_half).T
         return linear_transform_first
     else: 
+        # here x is assumed to be a matrix of shape (n_samples, n_features)
         return lambda x : np.matmul(coefficients,
-                                    complex_polynomial_features(x.T, degree=degree, 
+                                    complex_polynomial_features(x, degree=degree, 
                                                                 include_bias = include_bias,
                                                                 skip_linear=skip_linear).T).T 
 
