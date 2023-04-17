@@ -90,7 +90,9 @@ def get_fit_ridge(
         logger.info("Adding constraints to regression model")
         X, y, sample_weight = add_constraints(X, y, constraints, sample_weight, weight=1e10)
 
+    # mdl.predict() expects the matrix in the form (n_samples, n_features)
     mdl.fit(X.T, y.T, ridge_regressor__sample_weight = sample_weight)
+    
     mdl.map_info = {}
     map_coefs = np.zeros(mdl.named_steps.ridge_regressor.coef_.shape)
 
@@ -210,6 +212,7 @@ def get_fit_ridge_parametric(
         X_and_params, y, sample_weight = add_constraints(X_and_params, y, constraints, sample_weight, weight=1e10)
 
     mdl.fit(X_and_params.T, y.T, ridge_regressor__sample_weight = sample_weight)
+
     mdl.map_info = {}
     map_coefs = np.zeros(mdl.named_steps.ridge_regressor.coef_.shape)
     if do_scaling:
@@ -245,7 +248,6 @@ def fit_reduced_coords_and_parametrization(
     n_targets = X.shape[0]
     n_features = n_dim
     n_linear_coefs = n_targets * n_features # n_samples * n_features
-
     if initial_guess is None:
         # compute initial guess: projection matrix from svd
         # and nonlinear coefficients from ridge regression
@@ -257,16 +259,15 @@ def fit_reduced_coords_and_parametrization(
         linear_coefs, nonlinear_coefs = unpack_linear_nonlinear_coefficients(z, n_linear_coefs, n_features, n_targets)
         X_reduced = np.matmul(linear_coefs.T, X) # projection
         Error_linear = X - np.matmul(linear_coefs, X_reduced) # linear prediction
-
-        nonlinear_features = complex_polynomial_features(X_reduced, degree = poly_degree, skip_linear = True) # have to exclude the linear features
-        Error = Error_linear - np.matmul(nonlinear_coefs, nonlinear_features)
+        nonlinear_features = complex_polynomial_features(X_reduced.T, degree = poly_degree, skip_linear = True) # have to exclude the linear features
+        Error = Error_linear - np.matmul(nonlinear_coefs, nonlinear_features.T)
         #Error = np.linalg.norm(Error)**2
         Error = Error.ravel()
         if alpha is not None:  # ridge regularization
             Error = np.concatenate((Error, np.sqrt(alpha) *z))
         # add constraints as penalty terms:
-        constraint_linear = (linear_coefs.T @ linear_coefs - np.eye(n_features)).ravel()
-        constraint_nonlinear = (linear_coefs.T @ nonlinear_coefs).ravel()
+        constraint_linear = (np.matmul(linear_coefs.T, linear_coefs) - np.eye(n_features)).ravel()
+        constraint_nonlinear = np.matmul(linear_coefs.T, nonlinear_coefs).ravel()
         Error = np.concatenate((Error, np.sqrt(penalty_linear_cons) * constraint_linear, np.sqrt(penalty_nonlinear_cons) * constraint_nonlinear))
         return  Error / X.shape[1]
     # These are implemented as soft-constraints. 
@@ -283,7 +284,6 @@ def fit_reduced_coords_and_parametrization(
         )
     joint_coefs = np.concatenate((optimal_linear_coef, optimal_nonlinear_coef), axis=1) 
     powers = generate_exponents(n_features, poly_degree)
-
     decoder = Decoder(
         compute_polynomial_map(joint_coefs, poly_degree), # callable function
         {'coefficients': joint_coefs, 'exponents': powers}
@@ -327,13 +327,19 @@ class Decoder(NamedTuple): # to behave in the same way as the pipeline object ge
     fit = None
 
 
-def add_constraints(X, y, constraints, sample_weight, weight=1e10):
-    constLHS, constRHS = constraints
-    for l, r in zip(constLHS, constRHS):
+def add_constraints(
+        X,
+        y,
+        constraints,
+        sample_weight,
+        weight=1e10
+):
+    const_lhs, const_rhs = constraints
+    for l, r in zip(const_lhs, const_rhs):
         lhs = np.array(l).reshape(-1,1)
         rhs = np.array(r).reshape(-1,1)
         X = np.append(X, lhs, axis = 1)
         y = np.append(y, rhs, axis = 1)
     sample_weight = np.ones(X.shape[1])
-    sample_weight[-len(constLHS):] = weight
+    sample_weight[-len(const_lhs):] = weight
     return X, y, sample_weight
