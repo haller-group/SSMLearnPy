@@ -454,6 +454,3 @@ def insert_zeros(coef, structure):
         full_coeff_matrix = np.zeros(structure.shape).reshape(-1, 1)
     full_coeff_matrix[structure] = coef.reshape(-1, 1)
     return full_coeff_matrix.reshape(1, -1)
-
-
-
