@@ -175,10 +175,10 @@ def test_fit_reduced_coords_and_parametrization():
     trajectories = [sol_0.y, sol_1.y]
     t_emb, y_emb, _ = coordinates_embedding([t,t], trajectories, imdim = 2, over_embedding = 5)
     enc, dec = ridge.fit_reduced_coords_and_parametrization(y_emb, n_dim = 2, poly_degree=3)
-    y_rec = dec.predict(enc.predict(y_emb[0]))
-    assert np.allclose(y_rec, y_emb[0], atol = 1e-3)
-    y_rec = dec.predict(enc.predict(y_emb[1]))
-    assert np.allclose(y_rec, y_emb[1], atol = 1e-3)
+    y_rec = dec.predict(enc.predict(y_emb[0]).T) 
+    assert np.allclose(y_rec, y_emb[0].T, atol = 1e-3)
+    y_rec = dec.predict(enc.predict(y_emb[1]).T)
+    assert np.allclose(y_rec, y_emb[1].T, atol = 1e-3)
     # check the contraints:
     linear_coeff = enc.matrix_representation
     nonlinear_coeff = dec.map_info['coefficients'][:, 2:]
@@ -280,8 +280,9 @@ def test_nonlinear_change_of_coords():
 def test_complex_polynomial_features():
     Y = np.random.rand(2,10)
     poly = PolynomialFeatures(degree=3, include_bias=False).fit_transform(Y.T)
-    complexpoly = complex_polynomial_features(Y, degree=3)
-    assert np.allclose(poly.T, complexpoly)
+    #print(PolynomialFeatures(degree=3, include_bias=False).fit(Y.T).powers_.shape)
+    complexpoly = complex_polynomial_features(Y.T, degree=3)
+    assert np.allclose(poly.T, complexpoly.T)
 
 def test_prepare_normalform_transform_optimization():
     t = np.linspace(0, 10, 1000)
@@ -375,13 +376,13 @@ if __name__ == '__main__':
     test_ridge_with_or_without_scaling()
     #test_delay_embedding()
     #test_dimensionality_reduction()
+    #test_complex_polynomial_features()
     test_polynomial_features_pattern()
-    #test_fit_reduced_coords_and_parametrization()
+    test_fit_reduced_coords_and_parametrization()
     test_get_fit_ridge_parametric()
     test_normalform_nonlinear_coeffs()
     test_normalform_lincombinations()
     test_normalform_resonance()
-
     #test_nonlinear_change_of_coords()
     #test_prepare_normalform_transform_optimization()
     #test_normalform_transform()
