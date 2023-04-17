@@ -3,7 +3,13 @@ import numpy as np
 
 
 class PolynomialFeaturesWithPattern(PolynomialFeatures):
-    def __init__(self, degree=2, interaction_only=False, include_bias=True, structure=None):
+    def __init__(
+            self,
+            degree=2,
+            interaction_only=False,
+            include_bias=True,
+            structure=None
+            ):
         super().__init__(degree=degree, interaction_only=interaction_only, include_bias=include_bias)
         self.structure = structure
 
@@ -19,7 +25,13 @@ class PolynomialFeaturesWithPattern(PolynomialFeatures):
         return super().transform(X)[:, self.structure]
 
 
-def complex_polynomial_features(y, degree = 3, skip_linear = False, structure = None, include_bias = False):
+def complex_polynomial_features(
+        y,
+        degree = 3,
+        skip_linear = False,
+        structure = None,
+        include_bias = False
+        ):
     """
     This is a hack because PolynomialFeatures does not support complex data.
 
@@ -61,7 +73,11 @@ def complex_polynomial_features(y, degree = 3, skip_linear = False, structure = 
 def get_matrix(l:list):
     return np.concatenate(l, axis=1)
 
-def generate_exponents(n_features, degree, include_bias = False):
+def generate_exponents(
+        n_features,
+        degree,
+        include_bias = False
+        ):
     # generate a dummy set of polynomial features to read off the coefficient matrix
     poly = PolynomialFeatures(degree=degree,
                                include_bias=include_bias).fit(np.ones( (1, n_features) ))
@@ -69,14 +85,58 @@ def generate_exponents(n_features, degree, include_bias = False):
 
 
 
-def compute_polynomial_map(coefficients, degree, include_bias = False, skip_linear = False):
+def compute_polynomial_map(
+        coefficients,
+        degree,
+        include_bias = False,
+        skip_linear = False,
+        linear_transform = None
+        ):
     """
     Compute the polynomial map corresponding to the given coefficients
     """
-    return lambda x : np.matmul(coefficients,
-                                 complex_polynomial_features(x, degree=degree, 
+    if linear_transform is not None:
+        ndofs = int(linear_transform.shape[0] / 2)
+        def linear_transform_first(x):
+            y = np.matmul(linear_transform, x)
+            y_features = complex_polynomial_features(y.T, degree=degree, 
                                                              include_bias = include_bias,
-                                                               skip_linear=skip_linear).T).T 
+                                                             skip_linear = skip_linear).T
+            first_half = np.matmul(coefficients, y_features)
+            return insert_complex_conjugate(first_half)
+        return linear_transform_first
+    else: 
+        return lambda x : np.matmul(coefficients,
+                                    complex_polynomial_features(x.T, degree=degree, 
+                                                                include_bias = include_bias,
+                                                                skip_linear=skip_linear).T).T 
 
 def insert_complex_conjugate(x):
     return np.concatenate((x, np.conj(x)), axis = 0)
+
+
+def unpack_coefficient_matrices_from_vector(
+    z,
+    n_coefs_1,
+    n_features,
+    n_targets
+):
+    """Helper function for fit_reduced_coords_and_parametrization() and create_normalform_transform_objective().
+    Reshapes a long vector (variable for an optimization). Into _two_ matrices: 
+    Parameters:
+        z: (n_optim) array: vector of optimization variables
+        n_coefs: int: number of optimization variables that should be folded into the first matrix.
+                     All other variables are folded into the second matrix.
+        n_features: int: 
+        n_targets: int: The first matrix is folded into a matrix of shape (n_targets, n_features)
+                        The second matrix is folded into a matrix of shape (n_targets, n_features_2)
+                        where n_nonlinear_features = (n_optim - n_coefs_1)/n_targets
+    Returns:
+
+
+    """
+    matrix_1 = z[:n_coefs_1].reshape(n_targets, n_features)
+    n_coefs_2 = z.shape[0] - n_coefs_1
+    n_features_2 = int(n_coefs_2/n_targets)
+    matrix_2 = z[n_coefs_1:].reshape(n_targets, n_features_2)
+    return matrix_1, matrix_2

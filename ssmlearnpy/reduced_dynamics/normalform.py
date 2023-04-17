@@ -2,8 +2,8 @@
 from sklearn.preprocessing import PolynomialFeatures
 from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
 import numpy as np
-from ssmlearnpy.utils.preprocessing import complex_polynomial_features
-
+from ssmlearnpy.utils.ridge import get_fit_ridge
+from ssmlearnpy.utils.preprocessing import complex_polynomial_features, generate_exponents, compute_polynomial_map, insert_complex_conjugate, unpack_coefficient_matrices_from_vector
 
 
 class NonlinearCoordinateTransform():
@@ -21,49 +21,78 @@ class NonlinearCoordinateTransform():
     The coefficients of the transformation have to then be organized in a matrix of shape (n_poly_features, n_features)
 
     """
-    def __init__(self, dimension, degree, transform_coefficients = None, inverse_transform_coefficients = None):
+
+    def __init__(
+        self,
+        dimension,
+        degree,
+        transform_coefficients=None,
+        inverse_transform_coefficients=None,
+        linear_transform = None,
+    ):
         # can initialize with the coefficients of the transformation or as an empty object. in that case use the set_transform_coefficients method
+        # coefficients should be given as a matrix of shape (n_outputs, n_poly_features)
         self.transform_coefficients = transform_coefficients
         self.inverse_transform_coefficients = inverse_transform_coefficients
         self.dimension = dimension
         self.degree = degree
         self.transform_map = None
         self.inverse_transform_map = None
+        self.linear_transform = None
+        if linear_transform is not None:
+            self.linear_transform = linear_transform # should be the inverse of the eigenvector basis
+        # to be consistent with the ssm.decode() method,
+        # self.transform_map and self.inverse_transform_map expect a matrix of shape (n_samples, n_features)
         if self.transform_coefficients is not None:
-            self.transform_map = compute_polynomial_map(self.transform_coefficients, self.degree)
+            self.transform_map = compute_polynomial_map(
+                self.transform_coefficients, self.degree, linear_transform = self.linear_transform)
         if self.inverse_transform_coefficients is not None:
-            self.inverse_transform_map = compute_polynomial_map(self.inverse_transform_coefficients, self.degree)
-    
+            self.inverse_transform_map = compute_polynomial_map(
+                self.inverse_transform_coefficients, self.degree, linear_transform = self.linear_transform)
 
-
-    def set_transform_coefficients(self, transform_coefficients):
+    def set_transform_coefficients(
+            self,
+            transform_coefficients
+    ):
         self.transform_coefficients = transform_coefficients
-        self.transform_map = compute_polynomial_map(self.transform_coefficients, self.degree)
-    def set_inverse_transform_coefficients(self, inverse_transform_coefficients):
+        self.transform_map = compute_polynomial_map(
+            self.transform_coefficients, self.degree, linear_transform = self.linear_transform)
+
+    def set_inverse_transform_coefficients(
+            self,
+            inverse_transform_coefficients
+    ):
         self.inverse_transform_coefficients = inverse_transform_coefficients
-        self.inverse_transform_map = compute_polynomial_map(self.inverse_transform_coefficients, self.degree)
-
-
-
+        self.inverse_transform_map = compute_polynomial_map(
+            self.inverse_transform_coefficients, self.degree, linear_transform = self.linear_transform)
 
     def transform(self, z):
         """
-        Transform the coordinates z to y
+        Transform the coordinates z to y.
+        Parameters: 
+            z:  matrix of shape (n_samples, n_features)
+        returns:
+            y: matrix of shape (n_samples, n_features)
         """
         if self.transform_coefficients is None:
-            raise RuntimeError("The transformation coefficients have not been set")
-        return self.transform_map(z).T # transpose again to get the output in the right shape
-
+            raise RuntimeError(
+                "The transformation coefficients have not been set")
+        # transpose again to get the output in the right shape
+        return self.transform_map(z)
 
     def inverse_transform(self, z):
         """
         Perform the inverse transformation from the coordinates y to z
+        Parameters: 
+            y:  matrix of shape (n_samples, n_features)
+        returns:
+            z: matrix of shape (n_samples, n_features)
         """
         if self.inverse_transform_coefficients is None:
-            raise RuntimeError("The inverse transformation coefficients have not been set")
-        return self.inverse_transform_map(z).T
-    
-        
+            raise RuntimeError(
+                "The inverse transformation coefficients have not been set")
+        return self.inverse_transform_map(z)
+
 
 class NormalForm:
     """
@@ -72,47 +101,69 @@ class NormalForm:
     Parameters:
         - Linear part (matrix): linear part of the dynamics 
         - tolerance: tolerance for the resonance condition
-        
+
     """
-    def __init__(self, LinearPart, tolerance = None):
-        self.LinearPart = LinearPart
-        self.tolerance = tolerance # A good candidate for the tolerance is 10*min(Re(\lambda))
+
+    def __init__(
+        self,
+        LinearPart,
+        tolerance=None
+    ):
+        # A good candidate for the tolerance is 10*min(Re(\lambda))
+        self.tolerance = tolerance
         if self.tolerance is None:
-            eigenvalues, _ = np.linalg.eig(self.LinearPart) # eigenvalues are sorted
+            eigenvalues, _ = np.linalg.eig(
+                LinearPart)  # eigenvalues are sorted
             self.tolerance = 10*np.min(np.abs(np.real(eigenvalues)))
         self.resonances = None
-        self.diagonalized = False
+        # we precompute the transformation that diagnolizes the linear part
+        self.LinearPart, self.diagonalizing_matrix, self.diagonalized = diagonalize_linear_part(
+            LinearPart)
+        # self.LinearPart is always assumed to be diagonal and can be written as
+        # self.LinearPart = (self.diagonalizing_matrix)^{-1} @ original_matrix @ self.diagonalizing_matrix
         self.dynamics_structure = None
         self.transformation_structure = None
-        
-    def _nonlinear_coeffs(self, degree = 3):
+
+    def _nonlinear_coeffs(
+        self,
+        degree=3
+    ):
         """
         Computes the coefficients of the nonlinear part of the vector field. For more info see M. Cenedese (2021) 
         """
-        dimension = self.LinearPart.shape[0] # number of dimensions of the manifold ~ number of eigenvalues
-        exponents_of_nonlinear_map = generate_exponents(dimension, degree)# gives a matrix of shape (dimension, number of monomials of degree <= degree)
-        exponents_of_nonlinear_map = exponents_of_nonlinear_map[: , dimension:]
+        dimension = self.LinearPart.shape[0]  # number of dimensions of the manifold ~ number of eigenvalues
+        # gives a matrix of shape (dimension, number of monomials of degree <= degree)
+        exponents_of_nonlinear_map = generate_exponents(dimension, degree)
+        exponents_of_nonlinear_map = exponents_of_nonlinear_map[:, dimension:]
         return exponents_of_nonlinear_map
-    
 
-
-    def _eigenvalue_lin_combinations(self, degree = 3):
+    def _eigenvalue_lin_combinations(
+        self,
+        degree=3
+    ):
         """
         Construct the matrix made up of linear combinations of eigenvalues. For more info see e. g. M. Cenedese (2021)
         """
-        eigenvalues, _ = np.linalg.eig(self.LinearPart) # eigenvalues are sorted
-        eigenvalues_diag = np.diag(eigenvalues)
         coeffs_for_exponents = self._nonlinear_coeffs(degree)
-        return np.repeat(np.diag(eigenvalues_diag).reshape(-1,1), coeffs_for_exponents.shape[1], axis = 1) - np.matmul(np.diag(eigenvalues_diag), coeffs_for_exponents)
-    
-    def _resonance_condition(self, degree = 3):
+        return np.repeat(np.diag(self.LinearPart).reshape(-1, 1),
+                         coeffs_for_exponents.shape[1], axis=1) - \
+            np.matmul(np.diag(self.LinearPart), coeffs_for_exponents)
+
+    def _resonance_condition(
+        self,
+        degree=3
+    ):
         """
         Check if the eigenvalue linear combinations satisfy the resonance condition
         """
         lincombs = self._eigenvalue_lin_combinations(degree)
-        return np.abs(lincombs) < self.tolerance # return a boolean array
+        return np.abs(lincombs) < self.tolerance  # return a boolean array
 
-    def set_dynamics_and_transformation_structure(self, type='flow', degree = 3):
+    def set_dynamics_and_transformation_structure(
+        self,
+        type='flow',
+        degree=3
+    ):
         """
         For transforming to normal form we need to minimize
         ||d\dt (y + f_normalform(y)) - \Lambda*(y+f_normalform(y)) - N_normalform(y+f_normalform)||^2
@@ -128,21 +179,31 @@ class NormalForm:
         Returns:
             dydt - Lambda*y: (list of (n_features, n_samples))
         """
-        
+
         if type != 'flow':
             raise NotImplementedError("Only flow is implemented")
 
-        #if self.diagonalized:
-        size = self.LinearPart.shape[0] 
-        ndofs = int(size / 2) # only consider the first half of the coordinates: conjugates are discarded 
-        N_structure = self._resonance_condition(degree)[:ndofs, :] # sparse structure for the nonlinearities
-        self.dynamics_structure = np.sum(N_structure, axis = 0).astype(dtype=bool) # if there is a 1 in the structure matrix, we keep the corresponding column ~ logical or
-        self.transformation_structure = np.logical_not(self.dynamics_structure) # complement
-        return 
+        size = self.LinearPart.shape[0]
+        # only consider the first half of the coordinates: conjugates are discarded
+        ndofs = int(size / 2)
+        # assumes that the first half of the coordinates are the real part and the second half the imaginary part.
+        # sparse structure for the nonlinearities
+        N_structure = self._resonance_condition(degree)[:ndofs, :]
+        # if there is a 1 in the structure matrix, we keep the corresponding column ~ logical or
+        self.dynamics_structure = np.sum(
+            N_structure, axis=0).astype(dtype=bool)
+        self.transformation_structure = np.logical_not(
+            self.dynamics_structure)  # complement
+        return
 
 
-
-def prepare_normalform_transform_optimization(times, trajectories, LinearPart, type = 'flow', degree = 3):
+def prepare_normalform_transform_optimization(
+    times,
+    trajectories,
+    LinearPart,
+    type='flow',
+    degree=3
+):
     """
     Precompute terms for the optimization problem
     Parameters:
@@ -158,31 +219,76 @@ def prepare_normalform_transform_optimization(times, trajectories, LinearPart, t
         Transform_normalform_polynomial_features_timederivative: list of non-zero polynomial features of the trajectories included in the normal form transformation's time derivative
     """
 
-    size = LinearPart.shape[0] 
-    ndofs = int(size / 2) # only consider the first half of the coordinates: conjugates are discarded 
+    size = LinearPart.shape[0]
+    # only consider the first half of the coordinates: conjugates are discarded
+    ndofs = int(size / 2)
     if type != 'flow':
         raise NotImplementedError("Only flow is implemented")
 
     normalform = NormalForm(LinearPart)
-    normalform.set_dynamics_and_transformation_structure( type, degree)
+    normalform.set_dynamics_and_transformation_structure(type, degree)
+    # check if the normal form is applicable. If there are real eigenvalues, raise an error
+    if np.allclose(np.imag(np.diag(normalform.LinearPart)), 0):
+        raise ValueError(
+            "The normal form is not applicable. All eigenvalues need to be complex")
+    if normalform.diagonalized is False:
+        trajectories = [np.matmul(normalform.diagonalizing_matrix, y)
+                        for y in trajectories]
     linear_error = []
-    _, dy_dt = shift_or_differentiate(trajectories, times, type = 'flow') # only flow is implemented
+    _, dy_dt = shift_or_differentiate(
+        trajectories, times, type='flow')  # only flow is implemented
     for i, y in enumerate(trajectories):
         # compute the error in the linear part
-        linear_error.append(dy_dt[i] - LinearPart.dot(y)) 
-
+        linear_error.append(dy_dt[i] - normalform.LinearPart.dot(y))
     # precomute nonlinear terms in the transformation map
-    Transformation_normalform_polynomial_features = []
+    transformation_normalform_polynomial_features = []
     for y in trajectories:
-        Transformation_normalform_polynomial_features.append(complex_polynomial_features(y, degree = degree, skip_linear = True, structure = normalform.transformation_structure))
-    # compute the derivative of the transformed coordinates
-    _, Transformation_normalform_polynomial_features_timederivative = shift_or_differentiate(Transformation_normalform_polynomial_features, times, type = 'flow')
-    # also remove the unnecessary coordinates from the linear error 
-    return normalform, [l[:ndofs, :] for l in linear_error], Transformation_normalform_polynomial_features, Transformation_normalform_polynomial_features_timederivative
+        transformation_normalform_polynomial_features.append(
+            complex_polynomial_features(y.T,
+                                        degree=degree,
+                                        skip_linear=True,
+                                        structure=normalform.transformation_structure
+                                        ).T
+        )
+    # compute the derivative of the nonlinear features
+    _, transformation_normalform_polynomial_features_timederivative = shift_or_differentiate(
+        transformation_normalform_polynomial_features, times, type='flow')
+    # also remove the unnecessary coordinates from the linear error
+    return trajectories, \
+        normalform,\
+        [l[:ndofs, :] for l in linear_error],\
+        transformation_normalform_polynomial_features, \
+        transformation_normalform_polynomial_features_timederivative
 
+def create_normalform_initial_guess(initial_reduced_model,
+                                        normalform,
+                                        type='flow',
+                                        degree=3
+                                        ):
+    
+    """We do a ridge regression on the diagonalized coordinates (modal coordinates). 
+    The initial condition for the optimization is taken as the modal dynamics ridge regression problem. 
+    """
+    # compute the modal coordinates
+    initial_nonlinear_coeffs = initial_reduced_model.map_info['coefficients']
+    initial_nonlinear_coeffs_in_modalcoords = np.matmul(np.linalg.inv(normalform.diagonalizing_matrix), initial_nonlinear_coeffs)
+    # Set the initial guess for the normal form dynamics coeffs:
+    size = normalform.LinearPart.shape[0]
+    ndofs = int(size / 2)
+    initial_nonlinear_coeffs_in_modalcoords = initial_nonlinear_coeffs_in_modalcoords[:ndofs, :] # 
+    initial_guess_dynamics = initial_nonlinear_coeffs_in_modalcoords[:, size:][:, normalform.dynamics_structure]
+    # Set the initial guess for the normal form transformation coeffs as -1* the modal dynamics coeffs.
+    initial_guess_transformation =  -1*initial_nonlinear_coeffs_in_modalcoords[:, size:][:, normalform.transformation_structure]
+    iniitial_guess_joint_complex  = np.concatenate((initial_guess_dynamics.ravel(), initial_guess_transformation.ravel()))
+    return np.concatenate((np.real(iniitial_guess_joint_complex), np.imag(iniitial_guess_joint_complex)))
 
-
-def create_normalform_transform_objective(times, trajectories, Linearpart, type = 'flow', degree = 3):
+def create_normalform_transform_objective(
+    times,
+    trajectories,
+    Linearpart,
+    type='flow',
+    degree=3
+):
     """
     Minimize
     ||d\dt (y + f_normalform(y)) - \Lambda*(y+f_normalform(y)) - N_normalform(y+f_normalform)||^2
@@ -196,44 +302,71 @@ def create_normalform_transform_objective(times, trajectories, Linearpart, type 
         type: 'flow' or 'map'
         degree: max. degree of the polynomial transformation
     Returns:
-        normalform transformation
-        normalform dynamics
+        normalform Object
+        n_unknowns_dynamics: number of unknowns to optimize for in the dynamics
+        n_unknowns_transformation: number of unknowns to optimize for in the transformation
+        objective: objective function to be minimized. 
+                    Takes a single argument x, which is a real vector of size (n_unknowns_dynamics + n_unknowns_transformation)
     """
-    
-    normalform, linear_error, Transformation_normalform_polynomial_features, Transformation_normalform_polynomial_features_timederivative = prepare_normalform_transform_optimization(times, trajectories, Linearpart, type, degree)
+    # from this point, trajectories are assumed to be in the diagonalized coordinates
+    trajectories, normalform, linear_error, \
+        transformation_normalform_polynomial_features, \
+        transformation_normalform_polynomial_features_timederivative = prepare_normalform_transform_optimization(times,
+                                                                                                                 trajectories,
+                                                                                                                 Linearpart,
+                                                                                                                 type,
+                                                                                                                 degree)
     # set up optimization
-    size = Linearpart.shape[0] 
-    ndofs = int(size / 2) # only consider the first half of the coordinates: conjugates are discarded 
+    size = Linearpart.shape[0]
+    # only consider the first half of the coordinates: conjugates are discarded
+    ndofs = int(size / 2)
     # set up optimization
     n_unknowns_dynamics = np.sum(normalform.dynamics_structure)
-    n_unknowns_transformation = Transformation_normalform_polynomial_features[0].shape[0]
-    def objective(x): # x is purely real
+    n_unknowns_transformation = transformation_normalform_polynomial_features[0].shape[0]
+    def objective(x):  # x is purely real
         # convert to complex form. First half is real, second half is imaginary
-        n_unknowns = int( len(x) / 2)
-        
-        #print(n_unknowns)
+        n_unknowns = int(len(x) / 2)
         x_complex = x[:n_unknowns] + 1j*x[n_unknowns:]
-        # separate these into matrices of coefficients: 
-        coeff_dynamics = x_complex[:n_unknowns_dynamics].reshape(ndofs, int(n_unknowns_dynamics/ndofs)).reshape((ndofs, int(n_unknowns_dynamics/ndofs)))
-        coeff_transformation = x_complex[n_unknowns_dynamics:n_unknowns_dynamics + n_unknowns_transformation].reshape((ndofs, int(n_unknowns_transformation/ndofs)))
+        # separate these into matrices of coefficients:
+        n_rows = int(n_unknowns_dynamics/ndofs)
+        coeff_dynamics, coeff_transformation = unpack_coefficient_matrices_from_vector(
+            x_complex, n_unknowns_dynamics, n_rows, ndofs)
         nonlinear_error1 = []
         nonlinear_error2 = []
         derivative_error = []
         for i, y in enumerate(trajectories):
-            transformed = y[:ndofs] + coeff_transformation@Transformation_normalform_polynomial_features[i]
-            transformed_conj = np.repeat(transformed, 2, axis = 0)  # need to add the complex conjugate to evaluate the transformed coords
-            transformed_conj[ndofs:, :] = np.conj(transformed[:ndofs, :])
-            #  compute N_normalform(y+f_normalform)
-            temp = complex_polynomial_features(transformed_conj, degree = degree, skip_linear = True, structure = normalform.dynamics_structure)
-            nonlinear_error1.append(coeff_dynamics@temp)
+            transformed = y[:ndofs, :] + np.matmul(
+                coeff_transformation, transformation_normalform_polynomial_features[i])
+            transformed_conj = insert_complex_conjugate(transformed)
+            # here transformed_conj has shape (2*ndofs, n_samples)
+            # compute N_normalform(y+f_normalform)
+            temp = complex_polynomial_features(transformed_conj.T,
+                                               degree=degree,
+                                               skip_linear=True,
+                                               structure=normalform.dynamics_structure
+                                               ).T
+            nonlinear_error1.append(np.matmul(coeff_dynamics, temp))
             # compute Lambda*(f_normalform)
-            nonlinear_error2.append( normalform.LinearPart[:ndofs, :ndofs]@coeff_transformation@Transformation_normalform_polynomial_features[i])
+            nonlinear_error2.append(
+                np.matmul(normalform.LinearPart[:ndofs, :ndofs],
+                          np.matmul(coeff_transformation,
+                          transformation_normalform_polynomial_features[i])
+                          )
+            )
             # compute d/dt (f_normalform)
-            derivative_error.append(coeff_transformation@Transformation_normalform_polynomial_features_timederivative[i])
+            derivative_error.append(
+                np.matmul(coeff_transformation, 
+                          transformation_normalform_polynomial_features_timederivative[i])
+                )
         # the total error is: linear_error + d/dt (f_normalforn) - Lambda*(f_normalform) - N_normalform(y + f_normalform)
-        error_along_trajs = [np.linalg.norm((l + d - n1 - n2))**2 for l, d, n1, n2 in zip(linear_error, derivative_error, nonlinear_error1, nonlinear_error2)]
-        return np.sum(error_along_trajs) # sum over all trajectories. Could normalize with the number of trajectories
+        error_along_trajs = [l + d - n1 - n2 for l, d, n1, n2 in zip(
+            linear_error, derivative_error, nonlinear_error1, nonlinear_error2)]
+        # sum over all trajectories. Could normalize with the number of trajectories
+        sum_error = np.vstack([[np.real(e), np.imag(e)] for e in error_along_trajs]) # this is total error over all trajectories (complex)
+        return np.array(sum_error).ravel()
+
     return normalform, n_unknowns_dynamics, n_unknowns_transformation, objective
+
 
 def unpack_optimized_coeffs(optimal_x, ndofs, normalform, n_unknowns_dynamics, n_unknowns_transformation):
     """
@@ -247,20 +380,24 @@ def unpack_optimized_coeffs(optimal_x, ndofs, normalform, n_unknowns_dynamics, n
     Returns:
         dictionary with optimized coefficients
     """
-    n_unknowns = int( len(optimal_x) / 2)
+    n_unknowns = int(len(optimal_x) / 2)
     x_complex = optimal_x[:n_unknowns] + 1j*optimal_x[n_unknowns:]
-    # separate these into matrices of coefficients: 
-    coeff_dynamics = x_complex[:n_unknowns_dynamics].reshape(ndofs, int(n_unknowns_dynamics/ndofs)).reshape((ndofs, int(n_unknowns_dynamics/ndofs)))
-    coeff_transformation = x_complex[n_unknowns_dynamics:n_unknowns_dynamics + n_unknowns_transformation].reshape((ndofs, int(n_unknowns_transformation/ndofs)))
+    # separate these into matrices of coefficients:
+    coeff_dynamics = x_complex[:n_unknowns_dynamics].reshape(ndofs, int(
+        n_unknowns_dynamics/ndofs)).reshape((ndofs, int(n_unknowns_dynamics/ndofs)))
+    coeff_transformation = x_complex[n_unknowns_dynamics:n_unknowns_dynamics +
+                                     n_unknowns_transformation].reshape((ndofs, int(n_unknowns_transformation/ndofs)))
 
     # insert the zeros into the coefficient matrices, which is dictated by normalform.dynamics_structure and normalform.transformation_structure
-    coeff_dynamics = insert_zeros(coeff_dynamics, normalform.dynamics_structure)
-    coeff_transformation = insert_zeros(coeff_transformation, normalform.transformation_structure)
+    coeff_dynamics = insert_zeros(
+        coeff_dynamics, normalform.dynamics_structure)
+    coeff_transformation = insert_zeros(
+        coeff_transformation, normalform.transformation_structure)
 
     return {'coeff_dynamics': coeff_dynamics, 'coeff_transformation': coeff_transformation}
 
 
-def wrap_optimized_coefficients(ndofs, LinearPart, degree, optimized_coefficients, find_inverse = False):
+def wrap_optimized_coefficients(ndofs, normalform, degree, optimized_coefficients, find_inverse=False):
     """
     Wrap the optimized coefficients into a NonlinearCoordinateTransform object
     Parameters:
@@ -271,43 +408,52 @@ def wrap_optimized_coefficients(ndofs, LinearPart, degree, optimized_coefficient
         dynamics: dictionary collecting the exponents, coefficients and a callable vectorfield
     """
     coeff_dynamics = optimized_coefficients['coeff_dynamics']
-    coeff_dynamics = np.concatenate((LinearPart[:ndofs, :], coeff_dynamics), axis = 1) 
+    coeff_dynamics = np.concatenate(
+        (normalform.LinearPart[:ndofs, :], coeff_dynamics), axis=1)
     coeffs_transformation = optimized_coefficients['coeff_transformation']
-    coeffs_transformation = np.concatenate((np.eye(2*ndofs)[:ndofs, :], coeffs_transformation), axis = 1)
+    coeffs_transformation = np.concatenate(
+        (np.eye(2*ndofs)[:ndofs, :], coeffs_transformation), axis=1)
     # collect the reduced dynamics in a dictionary:
     dynamics = {}
     dynamics['coefficients'] = coeff_dynamics
-    dynamics['exponents'] = generate_exponents(2*ndofs, degree)
-    def vectorfield(t,x):
-        xeval = x.reshape(-1,1)
+    dynamics['exponents'] = generate_exponents(2 * ndofs, degree)
+
+    def vectorfield(t, x):
+        xeval = x.reshape(-1, 1)
         evaluation = compute_polynomial_map(coeff_dynamics, degree)(xeval)
-        return insert_complex_conjugate(evaluation).reshape(1,-1) # need to reshape this for the complex_polynomial_features function
+        # need to reshape this for the complex_polynomial_features function
+        return insert_complex_conjugate(evaluation).reshape(1, -1)
     dynamics['vectorfield'] = vectorfield
-    return NonlinearCoordinateTransform(2*ndofs, degree, inverse_transform_coefficients=coeffs_transformation), dynamics
+    return NonlinearCoordinateTransform(
+                                        2*ndofs,
+                                        degree, 
+                                        inverse_transform_coefficients=coeffs_transformation,
+                                        linear_transform=normalform.diagonalizing_matrix),\
+            dynamics
 
 
-def generate_exponents(ndofs, degree):
-    # generate a dummy set of polynomial features to read off the coefficient matrix:
-    # TODO: not too elegant
-    poly = PolynomialFeatures(degree=degree, include_bias=False).fit(np.ones( (1, ndofs) ))
-    return poly.powers_.T # gives a matrix of shape (ndofs, number of monomials of degree <= degree)
+def diagonalize_linear_part(LinearPart):
+    # do a linear transformation such that the lin. part
+    # is diagonal and the eigenvalues are sorted according to their real parts
+    eigenvalues, eigenvectors = np.linalg.eig(LinearPart)
+    index = eigenvalues.argsort()[::-1]  # largest eigenvalues first
+    eigenvalues = eigenvalues[index]
+    eigenvectors = eigenvectors[:, index]
+    # np.linalg.inv(eigen) @ np.diag(eigenvalues) @ np.linalg.inv(eigenvectors) = i
+    # only true if it was sorted correctly too
+    is_diagonal = np.allclose(np.diag(eigenvalues), LinearPart)
+    return np.diag(eigenvalues), np.linalg.inv(eigenvectors), is_diagonal
 
 
 def insert_zeros(coef, structure):
-    # the coefficient matrix can be complex too:
-    if np.dtype(coef[0,0]) == np.dtype('complex128'):
-        full_coeff_matrix = np.zeros(structure.shape, dtype = 'complex128').reshape(-1,1)
+    # the coefficient matrix can be complex:
+    if np.dtype(coef[0, 0]) == np.dtype('complex128'):
+        full_coeff_matrix = np.zeros(
+            structure.shape, dtype='complex128').reshape(-1, 1)
     else:
-        full_coeff_matrix = np.zeros(structure.shape).reshape(-1,1)
-    full_coeff_matrix[structure] = coef.reshape(-1,1)
+        full_coeff_matrix = np.zeros(structure.shape).reshape(-1, 1)
+    full_coeff_matrix[structure] = coef.reshape(-1, 1)
     return full_coeff_matrix.reshape(1, -1)
-    
 
-def compute_polynomial_map(transform_coefficients, degree):
-    """
-    Compute the polynomial map corresponding to the given coefficients
-    """
-    return lambda x : transform_coefficients@complex_polynomial_features(x, degree=degree)
 
-def insert_complex_conjugate(x):
-    return np.concatenate((x, np.conj(x)), axis = 0)
+
