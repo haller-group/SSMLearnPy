@@ -213,7 +213,7 @@ class SSMLearn:
             x_predict = decode_geometry(
                 self.decoder.predict,
                 x_reduced)
-
+            
             prediction_errors = compute_errors(
                 reference=x_to_predict,
                 prediction=x_predict,
