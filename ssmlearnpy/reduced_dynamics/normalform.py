@@ -3,7 +3,9 @@ from sklearn.preprocessing import PolynomialFeatures
 from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
 import numpy as np
 from ssmlearnpy.utils.ridge import get_fit_ridge
-from ssmlearnpy.utils.preprocessing import complex_polynomial_features, generate_exponents, compute_polynomial_map, insert_complex_conjugate, unpack_coefficient_matrices_from_vector
+from ssmlearnpy.utils.preprocessing import get_matrix, complex_polynomial_features, generate_exponents, compute_polynomial_map, insert_complex_conjugate, unpack_coefficient_matrices_from_vector
+from ssmlearnpy.utils import ridge
+
 
 
 class NonlinearCoordinateTransform():
@@ -56,7 +58,7 @@ class NonlinearCoordinateTransform():
     ):
         self.transform_coefficients = transform_coefficients
         self.transform_map = compute_polynomial_map(
-            self.transform_coefficients, self.degree, linear_transform = self.linear_transform)
+            self.transform_coefficients, self.degree, linear_transform = np.eye(self.dimension))
 
     def set_inverse_transform_coefficients(
             self,
@@ -70,29 +72,36 @@ class NonlinearCoordinateTransform():
         """
         Transform the coordinates z to y.
         Parameters: 
-            z:  matrix of shape (n_samples, n_features)
+            z:  matrix of shape (n_features, n_samples), or list of matrices
         returns:
-            y: matrix of shape (n_samples, n_features)
+            y: matrix of shape (n_features, n_samples), or list of matrices
         """
         if self.transform_coefficients is None:
             raise RuntimeError(
                 "The transformation coefficients have not been set")
         # transpose again to get the output in the right shape
-        return self.transform_map(z.T)
+        InvMatrix = np.linalg.inv(self.linear_transform)
+        if isinstance(z, list):
+            return [InvMatrix@self.transform_map(z_i).T for z_i in z]
+        else:
+            return InvMatrix@self.transform_map(z).T
 
     def inverse_transform(self, z):
         """
         Perform the inverse transformation from the coordinates y to z
         Parameters: 
-            y:  matrix of shape (n_samples, n_features)
+            y:  matrix of shape (n_features, n_samples), or list of matrices
         returns:
-            z: matrix of shape (n_samples, n_features)
+            z: matrix of shape (n_features, n_samples), or list of matrices
         """
         if self.inverse_transform_coefficients is None:
             raise RuntimeError(
                 "The inverse transformation coefficients have not been set")
-        return self.inverse_transform_map(z.T)
-
+        if isinstance(z, list):
+            return [self.inverse_transform_map(z_i).T for z_i in z]
+        else:
+            return self.inverse_transform_map(z).T
+        
 
 class NormalForm:
     """
@@ -293,8 +302,8 @@ def create_normalform_transform_objective(
     Minimize
     ||d\dt (y + f_normalform(y)) - \Lambda*(y+f_normalform(y)) - N_normalform(y+f_normalform)||^2
     where \Lambda is the linear part of the dynamics and N_normalform is the nonlinear part of the normal form dynamics
-    f_normalform is the nonlinear part of the normal form transformation z = T^{-1}(y)
-    based on the linear part we enforce the structure of the nonlinearities in N_normalform and f_normalform.
+    f_normalform is the nonlinear part of the normal form transformation z = T^{-1}(y) = y + f_normalform(y).
+    Based on the linear part we enforce the structure of the nonlinearities in N_normalform and f_normalform.
     Parameters:
         times: list of times
         trajectories: list of trajectories (each of shape (n_features, n_samples))
@@ -306,7 +315,7 @@ def create_normalform_transform_objective(
         n_unknowns_dynamics: number of unknowns to optimize for in the dynamics
         n_unknowns_transformation: number of unknowns to optimize for in the transformation
         objective: objective function to be minimized. 
-                    Takes a single argument x, which is a real vector of size (n_unknowns_dynamics + n_unknowns_transformation)
+                    Takes a single argument x, which is a real vector of size 2 * (n_unknowns_dynamics + n_unknowns_transformation)
     """
     # from this point, trajectories are assumed to be in the diagonalized coordinates
     trajectories, normalform, linear_error, \
@@ -397,14 +406,27 @@ def unpack_optimized_coeffs(optimal_x, ndofs, normalform, n_unknowns_dynamics, n
     return {'coeff_dynamics': coeff_dynamics, 'coeff_transformation': coeff_transformation}
 
 
-def wrap_optimized_coefficients(ndofs, normalform, degree, optimized_coefficients, find_inverse=False):
+def wrap_optimized_coefficients(
+        ndofs,
+        normalform,
+        degree,
+        optimized_coefficients,
+        find_inverse = False,
+        trajectories = None,
+        **regression_kwargs
+        ):
     """
     Wrap the optimized coefficients into a NonlinearCoordinateTransform object
     Parameters:
-        optimized_coefficients: dictionary with optimized coefficients
-        find_inverse: if True, the inverse transformation is combuted with regression
+        ndofs: number of degrees of freedom
+        normalform: normalform object used in the fit
+        degree: max. degree used in the fit
+        optimized_coefficients: dictionary with the optimal coefficients for the dynamics and for the transformation
+        find_inverse: if True, the inverse transformation is combuted with ridge regression.
+            if this is True, trajectories must be provided
     Returns:
-        NonlinearCoordinateTransform object
+        NonlinearCoordinateTransform object. Only its inverse_transform() method is fitted by default. 
+                            If find_inverse is True, the transform() method is also fitted. 
         dynamics: dictionary collecting the exponents, coefficients and a callable vectorfield
     """
     coeff_dynamics = optimized_coefficients['coeff_dynamics']
@@ -424,12 +446,25 @@ def wrap_optimized_coefficients(ndofs, normalform, degree, optimized_coefficient
         # need to reshape this for the complex_polynomial_features function
         return insert_complex_conjugate(evaluation)[:,0]
     dynamics['vectorfield'] = vectorfield
-    return NonlinearCoordinateTransform(
+    transformation = NonlinearCoordinateTransform(
                                         2*ndofs,
                                         degree, 
-                                        inverse_transform_coefficients=coeffs_transformation,
-                                        linear_transform=normalform.diagonalizing_matrix),\
-            dynamics
+                                        inverse_transform_coefficients = coeffs_transformation,
+                                        linear_transform = normalform.diagonalizing_matrix
+                                    )
+    if find_inverse:
+        if trajectories is None:
+            raise ValueError('If find_inverse is True, trajectories must be provided')
+        trajectories_in_modal_coords =[np.matmul(normalform.diagonalizing_matrix, t)  for t in trajectories]
+        # trajectories_in_normal_coords contains complex data, so can't use the ordinary ridge regression
+        # the inverse also needs to be near identity: y = z + f_inverse(z), f_inverse \in O(z^2)
+        coeffs, _ = ridge.fit_inverse(transformation.inverse_transform,
+                                      trajectories_source = trajectories,degree = degree,
+                                      trajectories_target = trajectories_in_modal_coords,
+                                      near_identity=True)
+
+        transformation.set_transform_coefficients(np.array(coeffs))
+    return transformation, dynamics
 
 
 def diagonalize_linear_part(LinearPart):

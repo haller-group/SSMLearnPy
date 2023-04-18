@@ -12,7 +12,8 @@ from ssmlearnpy.utils.preprocessing import get_matrix, generate_exponents, Polyn
 from ssmlearnpy.geometry.dimensionality_reduction import LinearChart
 from ssmlearnpy.utils.preprocessing import complex_polynomial_features, generate_exponents, compute_polynomial_map, unpack_coefficient_matrices_from_vector
 from typing import NamedTuple
-from scipy.optimize import minimize, least_squares
+from scipy.optimize import minimize, least_squares, lsq_linear
+
 
 logger = logging.getLogger("ridge_regression")
 
@@ -29,6 +30,7 @@ def get_fit_ridge(
 ):
     """Fit a ridge regression model to the data. 
     Parameters:
+    ----------
         X: (n_features, n_samples) or list 
         y: (n_outputs, n_samples) or list 
         constraints: list of lists: [LHS, RHS] such that model.predict(LHS[i]) == RHS[i].
@@ -40,6 +42,7 @@ def get_fit_ridge(
         alpha: float or list of floats, regularization parameter
         cv: int, number of folds for cross validation. If cv>=2, alpha must be a list
     Returns:
+    -------
         mdl: sklearn Pipeline object containing a PolynomialFeatures,
                  an optional StandardScaler, and Ridge regression 
     """    
@@ -125,6 +128,7 @@ def get_fit_ridge_parametric(
     """Fit a ridge regression model to the data, with parameter-dependent coefficients
     Here X and y must be lists of trajectories.
     Parameters:
+    ----------
         X: (n_features, n_samples) or list 
         y: (n_outputs, n_samples) or list 
         parameters: list of parameters for each trajectory. 
@@ -143,6 +147,7 @@ def get_fit_ridge_parametric(
         alpha: float or list of floats, regularization parameter
         cv: int, number of folds for cross validation. If cv>=2, alpha must be a list
     Returns:
+    -------
         mdl: sklearn Pipeline object containing a PolynomialFeaturesWithPattern,
                  an optional StandardScaler, and Ridge regression. 
     """   
@@ -261,7 +266,6 @@ def fit_reduced_coords_and_parametrization(
         Error_linear = X - np.matmul(linear_coefs, X_reduced) # linear prediction
         nonlinear_features = complex_polynomial_features(X_reduced.T, degree = poly_degree, skip_linear = True) # have to exclude the linear features
         Error = Error_linear - np.matmul(nonlinear_coefs, nonlinear_features.T)
-        #Error = np.linalg.norm(Error)**2
         Error = Error.ravel()
         if alpha is not None:  # ridge regularization
             Error = np.concatenate((Error, np.sqrt(alpha) *z))
@@ -272,7 +276,7 @@ def fit_reduced_coords_and_parametrization(
         return  Error / X.shape[1]
     # These are implemented as soft-constraints. 
     # TODO: implement as hard constraints (e.g. with SLSQP)
-    # TODO: Much slower than matlab. Possibly precalculating the Jacobian will help. 
+    # TODO: Slower than matlab. Possibly precalculating the Jacobian will help. 
     if optimize_kwargs is None:
         optimize_kwargs = {'method': 'lm', 'maxfev': 1e5, 'ftol': 1e-6, 'gtol':1e-6, 'verbose': 0}
     res = least_squares(compute_error, initial_guess, **optimize_kwargs) # we can use the special sturcutre of the loss and use scipy.optimize.least_suqares()
@@ -331,3 +335,76 @@ def add_constraints(
     sample_weight = np.ones(X.shape[1])
     sample_weight[-len(const_lhs):] = weight
     return X, y, sample_weight
+
+
+
+def fit_inverse(
+        function,
+        trajectories_source,
+        degree, 
+        trajectories_target = None,
+        near_identity = True,
+        ):
+    """
+    Using linear regression, we identify the inverse of the given function,
+    i. e., on the given trajectory data
+    inverse(function (trajectories_source) ) = trajectories_target.
+    trajectories_source and trajectories_target are lists of (n_features, n_samples) arrays 
+    and can be different. E. g. they are related by a linear transformation. M @ trajectories_source = trajectories_target
+    Parameters:
+    -----------
+    function: callable
+        The function to be inverted. Should take a (n_features, n_samples) array
+            as input and return a (n_targets, n_samples) array.
+    trajectories_source: list of (n_features, n_samples) arrays
+    trajectories_target: list of (n_targets, n_samples) arrays. Defaults to None. 
+                        in this case trajectories_source is used for both source and target
+    degree: int, maximal degree of the polynomial approximation
+    near_identity: bool, if True, the linear part of the inverse is fixed to be the identity 
+
+    Returns:
+    --------
+    coefficients: (n_features, n_targets) array
+    inverse: callable
+        The inverse of the given function. Takes a (n_targets, n_samples) array
+        as input and returns a (n_features, n_samples) array.
+    """
+    if trajectories_target is None:
+        trajectories_target = trajectories_source
+    image = [function(t) for t in trajectories_source]
+    if ~np.imag(image).any(): # if this is real valued
+        mdl = get_fit_ridge(image, trajectories_target, do_scaling = False, poly_degree = degree, alpha = 0)
+        return mdl.map_info['coefficients'], mdl.predict
+    else:
+        ndofs = int(trajectories_target[0].shape[0] / 2) # we assume that the second half of the features are complex conjugates of the first
+        nonlinear_features = [complex_polynomial_features(y.T, degree).T for y in image]
+        # CX= Y where C is the coefficient matrix,  X is the nonlinear features of image, Y is the target
+        X = get_matrix(nonlinear_features)
+        Y = get_matrix([t[:ndofs, :]  for t in trajectories_target])
+        X = np.conjugate(X).T
+        Y = np.conjugate(Y).T
+        coeffs = []
+        # solves Ax = b  -> x^T A^T = b^T
+        XX = np.matmul(np.conjugate(X).T, X)
+        XY = np.matmul(np.conjugate(X).T, Y)
+        XXinv = np.linalg.inv(XX)
+        result = np.matmul(XXinv, XY) # unconstrained solution
+        if near_identity: # constraining the linear part
+            # https://en.wikipedia.org/wiki/Ordinary_least_squares#Constrained_estimation
+            # Q ~ constraints_lhs.T
+            constraint_lhs = np.zeros((2*ndofs, XX.shape[1]))
+            constraint_rhs = np.zeros((2*ndofs, XY.shape[1]))
+            for j in range(2*ndofs):
+                constraint_lhs[j, j] = 1.
+            for i in range(ndofs):
+                constraint_rhs[i*ndofs] = 1.
+            matrix_middle = np.conjugate(constraint_lhs).T @ np.linalg.inv(constraint_lhs @ XXinv @ np.conjugate(constraint_lhs).T)
+            difference = constraint_lhs @ result - constraint_rhs # zero if the constraint is satisfied
+            result = result - XXinv @ matrix_middle @ difference
+            #difference = constraint_lhs @ result - constraint_rhs
+        callable = compute_polynomial_map(np.conjugate(result).T, degree)
+    return np.conjugate(result).T, callable
+
+
+
+

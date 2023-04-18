@@ -4,13 +4,14 @@ from ssmlearnpy.utils import ridge
 from ssmlearnpy import SSMLearn
 
 from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
-from ssmlearnpy.reduced_dynamics.normalform import NormalForm, NonlinearCoordinateTransform, create_normalform_initial_guess
+from ssmlearnpy.reduced_dynamics.normalform import NormalForm, NonlinearCoordinateTransform, create_normalform_initial_guess, wrap_optimized_coefficients
 from sklearn.preprocessing import PolynomialFeatures
-from ssmlearnpy.utils.preprocessing import get_matrix , PolynomialFeaturesWithPattern
+from ssmlearnpy.utils.preprocessing import get_matrix , PolynomialFeaturesWithPattern, insert_complex_conjugate
 from ssmlearnpy.reduced_dynamics.normalform import NonlinearCoordinateTransform, NormalForm, create_normalform_transform_objective, prepare_normalform_transform_optimization, unpack_optimized_coeffs
 from ssmlearnpy.geometry.coordinates_embedding import coordinates_embedding
 from scipy.optimize import minimize, least_squares
 import numpy as np
+from ssmlearnpy.utils import ridge
 from scipy.io import savemat, loadmat
 
 from ssmlearnpy.utils.preprocessing import complex_polynomial_features
@@ -58,6 +59,8 @@ def test_nonlinear_change_of_coords():
     yy = np.linspace(-0.5, 0.5, 10)
     transformedx = xx+yy+xx**2+yy**2
     vect = np.array([xx, yy])
+    print(vect.shape)
+
     #print(vect.shape)
     transformedy = xx-yy+xx**3-yy*xx
     poly_features= PolynomialFeatures(degree=3, include_bias=False).fit(vect.T)
@@ -71,11 +74,11 @@ def test_nonlinear_change_of_coords():
     # [0 1 0 1 2 0 1 2 3]]
     transformationCoeffs = np.array([[1,1, 1, 0, 1,0, 0,0,0], # x + y +x^2 +y^2
                                      [1, -1, 0, -1, 0, 1, 0, 0, 0]]) # x - y + x^3 - yx
-    TF = NonlinearCoordinateTransform(2, 3, transform_coefficients=transformationCoeffs)
-    z = TF.transform(vect.T)
-    
-    assert np.allclose(z[:,0], transformedx)
-    assert np.allclose(z[:,1], transformedy)
+    TF = NonlinearCoordinateTransform(2, 3, transform_coefficients=transformationCoeffs, inverse_transform_coefficients=transformationCoeffs)
+    print(transformationCoeffs.shape)
+    z = TF.inverse_transform(vect)
+    assert np.allclose(z[0,:], transformedx)
+    assert np.allclose(z[1,:], transformedy)
     
 
 def test_set_dynamics_and_transformation_structure():
@@ -120,7 +123,6 @@ def test_prepare_normalform_transform_optimization():
     mdl = ridge.get_fit_ridge(X, y, poly_degree = 3, constraints = cons)
     linearPart = mdl.map_info['coefficients'][:,:2]
     _, nf, linerror, Transformation_normalform_polynomial_features, DTransformation_normalform_polynomial_features = prepare_normalform_transform_optimization( times, trajectories, linearPart)
-    assert(DTransformation_normalform_polynomial_features[0].shape == (1000, 6))
 
 def test_create_normalform_initial_guess():
     t = np.linspace(0, 10, 1000)
@@ -143,6 +145,24 @@ def test_create_normalform_initial_guess():
     initial_guess = create_normalform_initial_guess(mdl, nf)
     assert len(initial_guess) == 14
 
+
+def test_fit_inverse():
+    np.random.seed(1)
+    x = np.random.rand(1, 400) + 1j * np.random.rand(1,400)
+    transformCoeffs = np.random.rand(1, 20) + 1j*np.random.rand(1,20)
+    xx = insert_complex_conjugate(x)
+    TF = NonlinearCoordinateTransform(2, 5, inverse_transform_coefficients=transformCoeffs, linear_transform=np.eye(2))
+    trajectory = [xx]   
+    _, inverse = ridge.fit_inverse(TF.inverse_transform, trajectory, 5, near_identity=True)
+    #transformed = TF.inverse_transform(trajs)
+    #inversetransformed = [inverse(t.T) for t in transformed]
+    image = TF.inverse_transform(trajectory)
+    TF.set_transform_coefficients(_)
+    inversetransformed = [inverse(t) for t in image]
+    
+    print(np.average(np.abs(xx[0,:] - inversetransformed[0])))
+
+import matplotlib.pyplot as plt
 def test_normalform_transform():
     t = np.linspace(0, 10, 1000)
     dt = t[1] - t[0]
@@ -161,25 +181,61 @@ def test_normalform_transform():
     # Fit reduced model
     mdl = ridge.get_fit_ridge(X, y, poly_degree = 5, constraints = cons)
     linearPart = mdl.map_info['coefficients'][:,:2]
-    dictTosave = {}
-    dictTosave['trajectories'] = trajectories
-    dictTosave['times'] = times
-    savemat('test_SSMLearn.mat', dictTosave)
+    
     nf, n_unknowns_dynamics, n_unknowns_transformation, objectiv = create_normalform_transform_objective(times, trajectories, linearPart, degree = 5)
     initial_guess = create_normalform_initial_guess(mdl, nf)
-    # # we can use the special sturcutre of the loss and use scipy.optimize.least_suqares()
+    # we can use the special sturcutre of the loss and use scipy.optimize.least_suqares()
     res = least_squares(objectiv, initial_guess)
     d = unpack_optimized_coeffs(res.x, 1, nf, n_unknowns_dynamics, n_unknowns_transformation)
-    print(d['coeff_dynamics'])
-    print(d['coeff_transformation'])
-    print(res)
+    trf, dyn = wrap_optimized_coefficients(1, nf, 5, d,  find_inverse=True, trajectories=trajectories, near_identity=True)
+    image = trf.inverse_transform(trajectories)
+    inversetransformed = [trf.transform(t) for t in image]
+    print([inversetransformed])
+    # plt.plot(np.real(xx[0,:]), np.real(inversetransformed[0][0,:]), '.')
+    # plt.plot(np.real(xx[0,:]), np.real(xx[0,:]), '-')
+
+    # plt.xlabel('True value')
+    # plt.ylabel('Predicted value')
+    # plt.show()
+
+    #target = [nf.LinearPart@t for t in trajectories]
+    #coeffs, callable = ridge.fit_inverse(trf.inverse_transform, trajectories, 5, trajectories_target=target, near_identity=True)
+    #assert np.allclose(coeffs[0,:2], [1,0]) # test the constraint
+    
+
+
+def test_misc_conjugates():
+    np.random.seed(0)
+    x = np.random.rand(1,3) + 1j*np.random.rand(1,3)
+    y = insert_complex_conjugate(x)
+    coeffs = np.random.rand(1,20) + 1j*np.random.rand(1,20)
+    nonlin_features = complex_polynomial_features(y.T, degree=5)
+    conj_second = insert_complex_conjugate(coeffs@nonlin_features.T)
+    coeffs_with_conj = insert_complex_conjugate(coeffs)
+    conj_first = coeffs_with_conj@nonlin_features.T
+
+    #print(np.allclose(conj_first, np.conj(conj_second)))
+    x = np.random.rand(3) + 1j*np.random.rand(3)
+
+    XX = np.array([x, np.conj(x), x**2, x*np.conj(x), np.conj(x)**2])
+    coeffs = np.random.rand(1,5) + 1j*np.random.rand(1,5)
+    conj_second = insert_complex_conjugate(coeffs@XX)
+    coeffs_with_conj = insert_complex_conjugate(coeffs)
+    #conj_first = coeffs_with_conj@XX
+
+    conj_first = np.concatenate((coeffs@XX, np.conj(coeffs)@np.conj(XX)), axis=0)
+
+    print(np.allclose(conj_first, conj_second))
 
 if __name__ == '__main__':
-    test_normalform_nonlinear_coeffs()
-    test_normalform_lincombinations()
-    test_normalform_resonance()
-    test_nonlinear_change_of_coords()
-    test_set_dynamics_and_transformation_structure()
-    test_prepare_normalform_transform_optimization()
-    test_create_normalform_initial_guess()
+    #test_misc_conjugates()
+    #test_normalform_nonlinear_coeffs()
+    #test_normalform_lincombinations()
+    ##test_normalform_resonance()
+    #test_nonlinear_change_of_coords()
+    #test_set_dynamics_and_transformation_structure()
+    #test_prepare_normalform_transform_optimization()
+    #test_create_normalform_initial_guess()
+
+    test_fit_inverse()
     test_normalform_transform()

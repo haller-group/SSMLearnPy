@@ -103,6 +103,7 @@ def compute_polynomial_map(
             # in order to also produce a matrix of shape (n_samples, n_features), we need to transpose a lot. 
             # TODO: probably there is a smarter way
             y = np.matmul(linear_transform, x) 
+            #print(y.shape, x.shape)
             y_features = complex_polynomial_features(y.T, degree=degree, 
                                                              include_bias = include_bias,
                                                              skip_linear = skip_linear)
@@ -113,9 +114,9 @@ def compute_polynomial_map(
             return insert_complex_conjugate(first_half).T
         return linear_transform_first
     else: 
-        # here x is assumed to be a matrix of shape (n_samples, n_features)
+        # here x is assumed to be a matrix of shape (n_features, n_samples)
         return lambda x : np.matmul(coefficients,
-                                    complex_polynomial_features(x, degree=degree, 
+                                    complex_polynomial_features(x.T, degree=degree, 
                                                                 include_bias = include_bias,
                                                                 skip_linear=skip_linear).T).T 
 
@@ -140,8 +141,8 @@ def unpack_coefficient_matrices_from_vector(
                         The second matrix is folded into a matrix of shape (n_targets, n_features_2)
                         where n_nonlinear_features = (n_optim - n_coefs_1)/n_targets
     Returns:
-
-
+        matrix_1: (n_targets, n_features) array
+        matrix_2: (n_targets, n_features_2) array, n_features_2 = (n_optim - n_coefs_1)/n_targets
     """
     matrix_1 = z[:n_coefs_1].reshape(n_targets, n_features)
     n_coefs_2 = z.shape[0] - n_coefs_1
