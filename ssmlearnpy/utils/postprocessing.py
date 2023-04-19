@@ -3,12 +3,12 @@ import numpy as np
 
 from sympy import latex
 from IPython.display import display_latex
-
+from scipy.optimize import minimize
 
 
 def disp(idx, symObj):
     eqn = '\\[' + idx + ' ' + latex(symObj) + '\\]'
-    display_latex(eqn,raw=True)
+    display_latex(eqn,raw = True)
     return
 
 def dispMore(idx, symObj):
@@ -17,7 +17,7 @@ def dispMore(idx, symObj):
         dispArray = dispArray + idx[i] + ' ' + latex(symObj[i])
         
     eqn = '\\[' + dispArray + '\\]'
-    display_latex(eqn,raw=True)
+    display_latex(eqn,raw = True)
     return
 
 def display_equation(coeffs, power, base_symbol='x', complex = False):
@@ -91,3 +91,51 @@ def convert_to_polar(variables, equations):
     phi_equations = [sy.simplify(p) for p in phi_equations]
 
     return radial_variables, angle_variables, r_equations, phi_equations
+
+
+
+
+def backbone_curve_and_damping_curve(r_variables, phidot_eq, rdot_eq):
+    # TODO: olny for single DOF for now
+    # returns tuples, first element is a callable, second element is the symbolic expression
+    backbone_callable = sy.lambdify(r_variables[0], phidot_eq[0])
+    damping_callable = sy.lambdify(r_variables[0], -rdot_eq[0]/r_variables[0])
+    return (backbone_callable, phidot_eq[0]), (damping_callable, -rdot_eq[0]/r_variables[0])
+
+
+def extract_FRC(backbone, damping, calibration_amplitude, frequencies_to_check):
+    # Compute roots of the sqrt argument ( (f/r)^2 - a^2(r) )
+    backbone_callable, backbone_symbolic = backbone
+    damping_callable, damping_symbolic = damping
+    rho_var = list(backbone_symbolic.free_symbols)[0]
+    rhs_to_eval = lambda r : (backbone_callable(r) *r 
+                              - np.sqrt( calibration_amplitude **2 - damping_callable(r)**2 * r**2) 
+                              )**2
+
+
+    roots = sy.solve(calibration_amplitude **2 / rho_var**2 - damping_symbolic**2, rho_var, set=True)
+    roots = list(roots[1])
+    roots = [r[0].evalf() for r in roots if (r[0].is_real and np.real(r[0].evalf())>0)] # only take the real root
+    minimum = minimize(rhs_to_eval, calibration_amplitude, method='Nelder-Mead')
+    rho_min_rho_sol = [minimum.x[0], roots]
+    rho_out = []
+    omega_out = []
+    psi_out = []
+    nEvalInt = 300
+    for i in range(len(rho_min_rho_sol)):
+        rho_int = np.linspace(rho_min_rho_sol[i],rho_min_rho_sol[i+1],nEvalInt)
+        rhoE = rho_int[int(nEvalInt/2)]
+
+        if (calibration_amplitude**2 / rhoE**2 - damping_callable(rhoE)**2) >=0:
+            rhoDamp = damping_callable(rho_int)
+            rhoFreq = backbone_callable(rho_int)
+            rhoSqrt = np.real(np.sqrt((calibration_amplitude / rho_int) **2 -damping_callable(rho_int)**2))
+            rhoPhs = np.atan2(rhoDamp, rhoSqrt)
+            rho_out.append(np.repeat(rho_int, 2))
+            omega_out.append([rhoFreq-rhoSqrt, rhoFreq+rhoSqrt])
+            psi_out.append([rhoPhs+np.pi, -rhoPhs])
+    return rho_out, omega_out, psi_out
+    # rhoSol = roots([fliplr(dampcoeffs(1:end-1)),-(fRed(iAmp)*fscale)]);
+    # rhoSol = sort(abs(rhoSol(imag(rhoSol)==0))); % eliminate spurios
+    # rhoMin = fminsearch(@(r) (freq(r)-sqrt((fRed(iAmp)*fscale./r).^2-damp(r).^2 )).^2,(fRed(iAmp)*fscale)/abs(coeffs(1)));
+    # rhoSol = [rhoMin; rhoSol];

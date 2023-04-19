@@ -167,28 +167,15 @@ class NormalForm:
         """
         lincombs = self._eigenvalue_lin_combinations(degree)
         return np.abs(lincombs) < self.tolerance  # return a boolean array
+    
+    def scale_diagonalizing_matrix(self, scaling_matrix):
+        self.diagonalizing_matrix = np.matmul(scaling_matrix, self.diagonalizing_matrix)
 
     def set_dynamics_and_transformation_structure(
         self,
         type='flow',
         degree=3
     ):
-        """
-        For transforming to normal form we need to minimize
-        ||d\dt (y + f_normalform(y)) - \Lambda*(y+f_normalform(y)) - N_normalform(y+f_normalform)||^2
-        where \Lambda is the linear part of the dynamics and N_normalform is the nonlinear part of the normal form dynamics
-        f_normalform is the nonlinear part of the normal form transformation z = T^{-1}(y)
-        based on the linear part we enforce the structure of the nonlinearities in N_normalform and f_normalform.
-        Parameters:
-            times: list of times
-            trajectories: list of trajectories (each of shape (n_features, n_samples))
-            type: 'flow' or 'map'
-            degree: max. degree of the polynomial transformation
-
-        Returns:
-            dydt - Lambda*y: (list of (n_features, n_samples))
-        """
-
         if type != 'flow':
             raise NotImplementedError("Only flow is implemented")
 
@@ -211,7 +198,8 @@ def prepare_normalform_transform_optimization(
     trajectories,
     LinearPart,
     type='flow',
-    degree=3
+    degree = 3,
+    do_scaling = True
 ):
     """
     Precompute terms for the optimization problem
@@ -221,6 +209,7 @@ def prepare_normalform_transform_optimization(
         LinearPart: linear part of the dynamics
         type: 'flow' or 'map'
         degree: max. degree of the polynomial transformation
+        do_scaling: if True, the transformation is scaled to yield modal coordinates of amplitude 1/2
     Returns:
         linear error
         Dynamics_normalform_polynomial_features: list of non-zero polynomial features of the trajectories included in the normal form dynamics
@@ -233,8 +222,11 @@ def prepare_normalform_transform_optimization(
     ndofs = int(size / 2)
     if type != 'flow':
         raise NotImplementedError("Only flow is implemented")
-
     normalform = NormalForm(LinearPart)
+    if do_scaling:
+        scaling_matrix = rescale_linear_part(normalform.diagonalizing_matrix, trajectories)
+        normalform.scale_diagonalizing_matrix(scaling_matrix)
+
     normalform.set_dynamics_and_transformation_structure(type, degree)
     # check if the normal form is applicable. If there are real eigenvalues, raise an error
     if np.allclose(np.imag(np.diag(normalform.LinearPart)), 0):
@@ -479,6 +471,17 @@ def diagonalize_linear_part(LinearPart):
     # only true if it was sorted correctly too
     is_diagonal = np.allclose(np.diag(eigenvalues), LinearPart)
     return np.diag(eigenvalues), np.linalg.inv(eigenvectors), is_diagonal
+
+def rescale_linear_part(diagonalizing_matrix, trajectories):
+    # rescale the linear part such that the max amplitude of the trajectories is 1/2
+    # this is done by rescaling the diagonalizing matrix
+    trajectories_matrix = get_matrix(trajectories)
+    modal_trajectories = np.matmul(diagonalizing_matrix, trajectories_matrix)
+    max_modal_amplitude = np.max(np.abs(modal_trajectories), axis = 1)
+
+    rescalematrix = np.linalg.inv(2* max_modal_amplitude *np.eye(2))
+    return rescalematrix # np.matmul(rescalematrix, diagonalizing_matrix)
+
 
 
 def insert_zeros(coef, structure):
