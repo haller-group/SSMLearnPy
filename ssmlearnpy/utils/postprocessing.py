@@ -103,7 +103,20 @@ def backbone_curve_and_damping_curve(r_variables, phidot_eq, rdot_eq):
     return (backbone_callable, phidot_eq[0]), (damping_callable, -rdot_eq[0]/r_variables[0])
 
 
-def extract_FRC(backbone, damping, calibration_amplitude, frequencies_to_check):
+def extract_FRC(backbone, damping, calibration_amplitude, NonlinearTransform, decoder, observable):
+    Npers = 1
+    normTimeEval = np.linspace(0,Npers,250*Npers+1)
+    normTimeEval = normTimeEval[1:-1]
+    phiEval =  normTimeEval*2*np.pi
+    cPhi = np.cos(phiEval)
+    sPhi = np.sin(phiEval)
+    forcingvector = 1j
+    zfTemp = forcingvector
+    fphase = np.arctan2(np.imag(zfTemp), np.real(zfTemp))
+
+
+
+
     # Compute roots of the sqrt argument ( (f/r)^2 - a^2(r) )
     backbone_callable, backbone_symbolic = backbone
     damping_callable, damping_symbolic = damping
@@ -117,24 +130,60 @@ def extract_FRC(backbone, damping, calibration_amplitude, frequencies_to_check):
     roots = list(roots[1])
     roots = [r[0].evalf() for r in roots if (r[0].is_real and np.real(r[0].evalf())>0)] # only take the real root
     minimum = minimize(rhs_to_eval, calibration_amplitude, method='Nelder-Mead')
-    rho_min_rho_sol = [minimum.x[0], roots]
+    rho_min_rho_sol = np.array([minimum.x[0], *roots], dtype=np.float64) # roots were sympy objects, convert to float
     rho_out = []
     omega_out = []
     psi_out = []
+
+
+    u = []
+    uPhase = []
+    z = []
+
     nEvalInt = 300
-    for i in range(len(rho_min_rho_sol)):
-        rho_int = np.linspace(rho_min_rho_sol[i],rho_min_rho_sol[i+1],nEvalInt)
+    
+    # extract the FRC in normal coordinates
+    for i in range(len(rho_min_rho_sol)-1):
+        rho_int = np.linspace(rho_min_rho_sol[i], rho_min_rho_sol[i+1], nEvalInt)
         rhoE = rho_int[int(nEvalInt/2)]
 
         if (calibration_amplitude**2 / rhoE**2 - damping_callable(rhoE)**2) >=0:
             rhoDamp = damping_callable(rho_int)
             rhoFreq = backbone_callable(rho_int)
-            rhoSqrt = np.real(np.sqrt((calibration_amplitude / rho_int) **2 -damping_callable(rho_int)**2))
-            rhoPhs = np.atan2(rhoDamp, rhoSqrt)
-            rho_out.append(np.repeat(rho_int, 2))
-            omega_out.append([rhoFreq-rhoSqrt, rhoFreq+rhoSqrt])
-            psi_out.append([rhoPhs+np.pi, -rhoPhs])
-    return rho_out, omega_out, psi_out
+            rhosqrt = np.array(calibration_amplitude**2/rho_int**2 - damping_callable(rho_int)**2, dtype=float)
+            rhoSqrt = np.real(np.sqrt(rhosqrt))
+            rhoPhs = np.arctan2(rhoDamp, rhoSqrt).reshape(1,-1)
+            rho_out.append(np.repeat(rho_int.reshape(1,-1), 2, axis = 0))
+            omega_out.append(np.concatenate(((rhoFreq-rhoSqrt).reshape(1,-1),
+                                              (rhoFreq+rhoSqrt).reshape(1,-1))))
+            psi_out.append(np.concatenate((rhoPhs+np.pi, -rhoPhs)))
+            omega_out = np.squeeze(np.array(omega_out))
+            rho_out = np.squeeze(np.array(rho_out))
+            psi_out = np.squeeze(np.array(psi_out))
+        # transform back to real coordinates:
+            for iSol in [1, 0]:
+                uTemp = np.zeros((1,nEvalInt))
+                uPhaseTemp = np.zeros((1,nEvalInt))
+                zTemp = np.zeros((1,nEvalInt))
+                for iRho in range(nEvalInt):
+                    iOmega = omega_out[-iSol,iRho]
+                    timeEval = phiEval/iOmega
+                    thetaEval = phiEval + fphase + psi_out[-iSol,iRho]
+                    zEval = rho_out[-iSol,iRho]*np.exp(1j*thetaEval)
+                    etaEval = NonlinearTransform.inverse_transform(zEval.reshape(-1,1))
+                    y = decoder(etaEval)
+                    #yAmplitudeFunction = lambda y : y[observable,:]
+                    yAmplitudeFunction = y[observable,:]
+                    zTemp[iRho] = zEval[0]
+                    uTemp[iRho] = np.max(np.abs(yAmplitudeFunction))
+                    zfTemp = normTimeEval[1]* np.sum( yAmplitudeFunction*(cPhi-1j*sPhi ) )
+                    uPhaseTemp[iRho] = np.arctan2(np.imag(zfTemp), np.real(zfTemp))
+
+                z.append(zTemp)
+                u.append(uTemp)
+                uPhase.append(uPhaseTemp)
+
+    return rho_out, omega_out, psi_out, z, u, uPhase
     # rhoSol = roots([fliplr(dampcoeffs(1:end-1)),-(fRed(iAmp)*fscale)]);
     # rhoSol = sort(abs(rhoSol(imag(rhoSol)==0))); % eliminate spurios
     # rhoMin = fminsearch(@(r) (freq(r)-sqrt((fRed(iAmp)*fscale./r).^2-damp(r).^2 )).^2,(fRed(iAmp)*fscale)/abs(coeffs(1)));
