@@ -371,7 +371,8 @@ def create_normalform_transform_objective(
         error_along_trajs = [l + d - n1 - n2 for l, d, n1, n2 in zip(
             linear_error, derivative_error, nonlinear_error1, nonlinear_error2)]
         # sum over all trajectories. Could normalize with the number of trajectories
-        sum_error = np.vstack([[np.real(e), np.imag(e)] for e in error_along_trajs]) # this is total error over all trajectories (complex)
+
+        sum_error = np.hstack([[np.real(e.ravel()), np.imag(e.ravel())] for e in error_along_trajs]) # this is total error over all trajectories (complex)
         return np.array(sum_error).ravel()
 
     return normalform, n_unknowns_dynamics, n_unknowns_transformation, objective
@@ -441,7 +442,7 @@ def wrap_optimized_coefficients(
     dynamics['exponents'] = generate_exponents(2 * ndofs, degree)
 
     def vectorfield(t, x):
-        xeval = x.reshape(1,-1)
+        xeval = x.reshape(-1,1)
         evaluation = compute_polynomial_map(coeff_dynamics, degree)(xeval).T
         # need to reshape this for the complex_polynomial_features function
         return insert_complex_conjugate(evaluation)[:,0]

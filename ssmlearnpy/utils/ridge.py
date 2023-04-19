@@ -372,7 +372,7 @@ def fit_inverse(
     if trajectories_target is None:
         trajectories_target = trajectories_source
     image = [function(t) for t in trajectories_source]
-    if ~np.imag(image).any(): # if this is real valued
+    if ~np.imag(image[0]).any(): # if this is real valued
         mdl = get_fit_ridge(image, trajectories_target, do_scaling = False, poly_degree = degree, alpha = 0)
         return mdl.map_info['coefficients'], mdl.predict
     else:
