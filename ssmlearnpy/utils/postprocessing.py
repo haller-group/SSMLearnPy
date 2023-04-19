@@ -104,6 +104,9 @@ def backbone_curve_and_damping_curve(r_variables, phidot_eq, rdot_eq):
 
 
 def extract_FRC(backbone, damping, calibration_amplitude, NonlinearTransform, decoder, observable):
+    # implementation follows: 
+    # https://github.com/mattiacenedese/SSMLearn/blob/c474a20640eed98dba8e329906f29c2c809c17fe/src/postprocessing/analyticalFRC.m
+    #
     Npers = 1
     normTimeEval = np.linspace(0,Npers,250*Npers+1)
     normTimeEval = normTimeEval[1:-1]
