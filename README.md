@@ -10,17 +10,19 @@ This package perform data-driven identification of reduced order model based on 
 
 The computational steps for achieving a reduced-order model are:
 
-1. Embedding of the measurements in a suitable observable space
-2. Computation of the invariant manifold parametrization and its reduced order coordinates
-3. Identification of the reduced dynamics
+1. Embedding of the simulation/measurement data in a suitable observable space;
+2. Computation of the invariant manifold parametrization and its reduced order or latent coordinates;
+3. Identification of the reduced dynamics, with initial implementation of normal form transformation.
 
 The code can run analytics and predictions on the reduced-order model, as shown in our examples. There are no constraints on the types of masurements, on the kind of nonlinearities or on the problem dimensions.
 
 We have included a demonstration of SSM computation over the following examples.
 
-- Von Kármán straight beam in 2D: data from FEM simulations
-- Vortex Shedding behind a cylinder: data from CFD simulations, projected on a low-dimensional linear subspace of the phase space
-- Couette flow: data from CFD simulations, projected on a low-dimensional linear subspace of the phase space, for different regimes.
+- Oscillator chain: n degrees of freedom with trajectories on or off specific SSMs;
+- Brake-Reuss beam: benchmark system for the dynamics of jointed structures, data from experimental measurements (DIC and accelerometers);
+- Vortex Shedding behind a cylinder: data from CFD simulations, projected on a low-dimensional linear subspace of the phase space;
+- Couette flow: data from CFD simulations, projected on a low-dimensional linear subspace of the phase space, for different regimes;
+- Liquid sloshing of a water tank: data from experimental measurements.
 
 ## Installation
 1. Clone the project with 
