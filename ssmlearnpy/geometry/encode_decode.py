@@ -4,7 +4,7 @@ def encode_geometry(
     ):
     x_reduced = []
     for i_elem in range(len(x)):
-        x.append(encoder(x[i_elem]))
+        x_reduced.append(encoder(x[i_elem]))
     return x_reduced
 
 def decode_geometry(

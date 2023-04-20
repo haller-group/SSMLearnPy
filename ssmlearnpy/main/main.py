@@ -1,7 +1,6 @@
 import logging
 
 import numpy as np
-import sklearn
 
 from ssmlearnpy.geometry.coordinates_embedding import coordinates_embedding
 from ssmlearnpy.geometry.dimensionality_reduction import reduce_dimensions
@@ -12,11 +11,9 @@ from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differen
 from ssmlearnpy.reduced_dynamics.advector import advect
 
 from ssmlearnpy.utils.compute_errors import compute_errors
-from ssmlearnpy.utils.ridge import get_fit_ridge
+from ssmlearnpy.utils.ridge import get_fit_ridge, fit_reduced_coords_and_parametrization, get_fit_ridge_parametric
 from ssmlearnpy.utils.ridge import get_matrix
 from ssmlearnpy.utils.file_handler import get_vectors
-from ssmlearnpy.utils.plots import plot_xy
-from ssmlearnpy.utils.plots import plot_xyz
 from ssmlearnpy.utils.plots import compute_surface
 
 logger = logging.getLogger("SSMLearn")
@@ -39,14 +36,9 @@ class SSMLearn:
         derive_embdedding=True,
         ssm_dim: int=None,
         coordinates_embeddings_args: dict={},
-        reduced_coordinates_method: str='basic',
         dynamics_type = 'flow',
         dynamics_structure = 'generic',
-        error_metric = 'NTE',
-        font_name = 'Helvetica', 
-        font_size = 16,
-        label_observables = 'y',
-        label_reduced_coordinates = 'x'
+        error_metric = 'NTE'
     ) -> None:
         self.input_data = {}
 
@@ -85,11 +77,7 @@ class SSMLearn:
         
         self.emb_data['params'] = params
         self.emb_data['reduced_coordinates'] = reduced_coordinates
-        self.font_name = font_name
-        self.font_size = font_size
-        self.plt_labels = {}
-        self.plt_labels['observables'] = label_observables
-        self.plt_labels['reduced_coordinates'] = label_reduced_coordinates
+
         self.encoder = None
         self.decoder = None
         self.reduced_dynamics = None 
@@ -117,12 +105,12 @@ class SSMLearn:
     ) -> None:
         self.encoder = reduce_dimensions(
             method=method,
-            n_dim = self.ssm_dim
+            n_dim = self.ssm_dim,
             **keyargs
         )
         if self.emb_data['reduced_coordinates'] is None:
-            self.encoder.fit(self.emb_data)
-            self.emb_data['reduced_coordinates']=self.encoder.predict(self.emb_data)
+            self.encoder.fit(self.emb_data['observables'])
+            self.emb_data['reduced_coordinates']=self.encoder.predict(self.emb_data['observables'])
         else:
             logger.info("Reduced coordinated already passed to SSMLearn, skipping.")
 
@@ -131,12 +119,23 @@ class SSMLearn:
         self,
         **regression_args
     ) -> None:
-        self.decoder = get_fit_ridge(
-            self.emb_data['reduced_coordinates'],
-            self.emb_data['observables'],
-            **regression_args
-        )
-
+        if self.emb_data['reduced_coordinates'] is not None: # reduced coordinates have been precomputed
+            if self.emb_data['params'] is not None:
+                self.decoder = get_fit_ridge_parametric(
+                        self.emb_data['reduced_coordinates'],
+                        self.emb_data['observables'],
+                        self.emb_data['params'],
+                        **regression_args)
+            else:
+                self.decoder = get_fit_ridge(
+                        self.emb_data['reduced_coordinates'],
+                        self.emb_data['observables'],
+                        **regression_args)
+        else:
+            self.encoder, self.decoder = fit_reduced_coords_and_parametrization(self.emb_data['observables'],
+                                                                                 self.ssm_dim, **regression_args) # get both decoder and encoder
+            self.emb_data['reduced_coordinates'] = [self.encoder.predict(trajectory)
+                                                     for trajectory in self.emb_data['observables']]
     def get_surface(
         self,
         idx_reduced_coordinates = [1, 2],
@@ -176,11 +175,19 @@ class SSMLearn:
             self.emb_data['time'], 
             self.dynamics_type
         )
-        self.reduced_dynamics = get_fit_ridge(
-            X,
-            y,
-            **regression_args
-        )
+        if self.emb_data['params'] is not None:
+            self.reduced_dynamics = get_fit_ridge_parametric(
+                X,
+                y,
+                self.emb_data['params'],
+                **regression_args
+            )
+        else:
+            self.reduced_dynamics = get_fit_ridge(
+                X,
+                y,
+                **regression_args
+            )
         lin_part = self.reduced_dynamics.map_info['coefficients'][:,:X[0].shape[0]]
         d, v = np.linalg.eig(lin_part)
         self.reduced_dynamics.map_info['eigenvalues_lin_part'] = d
@@ -193,7 +200,7 @@ class SSMLearn:
         x = [],
         x_reduced = []
     ) -> None:
-        if bool(t) == False:
+        if bool(t) is False:
             if idx_trajectories == 0:
                 t_to_predict = self.emb_data['time']
                 x_reduced = self.emb_data['reduced_coordinates']
@@ -206,7 +213,7 @@ class SSMLearn:
             x_predict = decode_geometry(
                 self.decoder.predict,
                 x_reduced)
-
+            
             prediction_errors = compute_errors(
                 reference=x_to_predict,
                 prediction=x_predict,
@@ -218,7 +225,7 @@ class SSMLearn:
             self.geometry_predictions['observables'] = x_predict
             self.geometry_predictions['errors'] = prediction_errors
         else:
-            if bool(x_reduced) == False:
+            if bool(x_reduced) is False:
                 x_reduced = encode_geometry(
                 self.encoder.predict,
                 x)  
@@ -245,18 +252,18 @@ class SSMLearn:
         t = [],
         x_reduced = []
     ) -> None:
-        if bool(t) == False:
+        if bool(t) is False:
             if idx_trajectories == 0:
                 t_to_predict = self.emb_data['time']
                 x_to_predict = self.emb_data['reduced_coordinates']
             else:
                 t_to_predict = [self.emb_data['time'][i] for i in idx_trajectories]
-                x_to_predict = [self.emb_data['reduced_coordinates'][i] for i in idx_trajectories] 
+                x_to_predict = [self.emb_data['reduced_coordinates'][i] for i in idx_trajectories]
             
             t_predict, x_predict  = advect(
-                dynamics=self.reduced_dynamics.predict, 
-                t=t_to_predict, 
-                x=x_to_predict, 
+                dynamics=self.reduced_dynamics.predict,
+                t=t_to_predict,
+                x=x_to_predict,
                 dynamics_type=self.dynamics_type
             )
 
@@ -271,9 +278,9 @@ class SSMLearn:
             self.reduced_dynamics_predictions['errors'] = prediction_errors
         else:
             t_predict, x_predict  = advect(
-                dynamics=self.reduced_dynamics.predict, 
-                t=t, 
-                x=x_reduced, 
+                dynamics=self.reduced_dynamics.predict,
+                t=t,
+                x=x_reduced,
                 dynamics_type=self.dynamics_type
             )
 
@@ -296,7 +303,7 @@ class SSMLearn:
         x = [],
         x_reduced = []
     ) -> None:
-        if bool(t) == False:
+        if bool(t) is False:
             if idx_trajectories == 0:
                 t_to_predict = self.emb_data['time']
                 x_to_predict = self.emb_data['observables']
@@ -304,11 +311,11 @@ class SSMLearn:
                 t_to_predict = [self.emb_data['time'][i] for i in idx_trajectories]
                 x_to_predict = [self.emb_data['observables'][i] for i in idx_trajectories]
 
-            if bool(self.geometry_predictions) == False:
-                self.predict_geometry(idx_trajectories) 
+            if bool(self.geometry_predictions) is False:
+                self.predict_geometry(idx_trajectories)
 
-            if bool(self.reduced_dynamics_predictions) == False:
-                self.predict_reduced_dynamics(idx_trajectories)   
+            if bool(self.reduced_dynamics_predictions) is False:
+                self.predict_reduced_dynamics(idx_trajectories)
 
             x_predict = decode_geometry(
                 self.decoder.predict,
@@ -355,172 +362,7 @@ class SSMLearn:
             predictions['errors'] = prediction_errors
             return predictions
 
-    def plot(
-        self,
-        data_name = 'observables',
-        data_type = 'values',
-        idx_coordinates = [1],
-        idx_trajectories = 0,
-        with_predictions = False,
-        type_predictions = 'dynamics',
-        t = [],
-        x = [],
-        t_pred = [],
-        x_pred = [],
-        plt_labels = ['time [s]', 'x', ''],
-        plt_width = 560,  
-        plt_height = 420,
-        dict_margin = {},
-        add_surface = False,
-        surface_margin = 10,
-        surface_colorscale = 'agsunset'
-    ) -> None:
-        x_plot, y_plot, z_plot = [], [], []
-        if bool(dict_margin) == False:
-            plt_margins = plt_width / 20
-            dict_margin = dict(l=plt_margins, r=plt_margins, b=plt_margins, t=plt_margins)
-        if bool(x) == False:
-            plt_labels[1] = self.plt_labels[data_name]    
-            if idx_trajectories == 0:
-                t_to_plot = self.emb_data['time']
-                x_to_plot = self.emb_data[data_name]
-            else:
-                t_to_plot= [self.emb_data['time'][i] for i in idx_trajectories]
-                x_to_plot = [self.emb_data[data_name][i] for i in idx_trajectories]
-            if data_type == 'errors':
-                with_predictions = True
-            if with_predictions == True:
-                if bool(self.predictions) == False:
-                    self.predict(idx_trajectories)    
-                if type_predictions == 'dynamics':  
-                    if idx_trajectories == 0:
-                        if data_name == 'observables':
-                            t_pred_to_plot = self.predictions['time']
-                            if data_type == 'values':
-                                x_pred_to_plot = self.predictions[data_name]
-                            else:
-                                x_pred_to_plot = self.predictions[data_type]
-                        else:
-                            t_pred_to_plot = self.reduced_dynamics_predictions['time']
-                            if data_type == 'values':
-                                x_pred_to_plot = self.reduced_dynamics_predictions[data_name]
-                            else:
-                                x_pred_to_plot = self.reduced_dynamics_predictions[data_type]        
-                    else:
-                        if data_name == 'observables':
-                            t_pred_to_plot= [self.predictions['time'][i] for i in idx_trajectories]
-                            if data_type == 'values':
-                                x_pred_to_plot = [self.predictions[data_name][i] for i in idx_trajectories]   
-                            else:
-                                x_pred_to_plot = [self.predictions[data_type][i] for i in idx_trajectories]  
-                        else: 
-                            t_pred_to_plot= [self.reduced_dynamics_predictions['time'][i] for i in idx_trajectories]
-                            if data_type == 'values':
-                                x_pred_to_plot = [self.reduced_dynamics_predictions[data_name][i] for i in idx_trajectories]   
-                            else:
-                                x_pred_to_plot = [self.reduced_dynamics_predictions[data_type][i] for i in idx_trajectories]  
-                else:
-                    if idx_trajectories == 0:
-                        t_pred_to_plot = self.geometry_predictions['time']
-                        if data_type == 'values':
-                            x_pred_to_plot = self.geometry_predictions[data_name]
-                        else:
-                            x_pred_to_plot = self.geometry_predictions[data_type]
-                    else:
-                        t_pred_to_plot= [self.geometry_predictions['time'][i] for i in idx_trajectories]
-                        if data_type == 'values':
-                            x_pred_to_plot = [self.geometry_predictions[data_name][i] for i in idx_trajectories]    
-                        else:
-                            x_pred_to_plot = [self.geometry_predictions[data_type][i] for i in idx_trajectories]  
-                if data_type == 'errors':
-                    t_to_plot, x_to_plot = t_pred_to_plot, x_pred_to_plot
-                    with_predictions = False
-                    if type_predictions == 'dynamics': 
-                        if data_name == 'observables':
-                            plt_labels[1] = 'Errors [%]'
-                        else:
-                            plt_labels[1] = 'Errors Reduced Dynamics [%]'
-                    else:
-                        plt_labels[1] = 'Errors Geometry [%]'
-        else:
-            t_to_plot, t_pred_to_plot, x_to_plot, x_pred_to_plot = t, t_pred, x, x_pred
-
-        if len(idx_coordinates) == 1:
-            time_plot = True
-            x_label = plt_labels[0]
-            x_plot = t_to_plot
-            if len(x_to_plot[0].shape) == 1:
-                y_label = plt_labels[1]
-                y_plot = [x_to_plot[i] for i in range(len(x_to_plot))]
-            else:
-                y_label = plt_labels[1] + '<sub>' + str(idx_coordinates[0]) + '</sub>'
-                y_plot = [x_to_plot[i][idx_coordinates[0]-1,:] for i in range(len(x_to_plot))]
-            if with_predictions == True:
-                x_pred_plot = t_pred_to_plot
-                y_pred_plot = [x_pred_to_plot[i][idx_coordinates[0]-1,:] for i in range(len(x_pred_to_plot))]
-            else:
-                x_pred_plot, y_pred_plot = [], []       
-        else:
-            time_plot = False
-            x_plot = [x_to_plot[i][idx_coordinates[0]-1,:] for i in range(len(x_to_plot))]
-            y_plot = [x_to_plot[i][idx_coordinates[1]-1,:] for i in range(len(x_to_plot))]
-            if with_predictions == True:
-                x_pred_plot = [x_pred_to_plot[i][idx_coordinates[0]-1,:] for i in range(len(x_pred_to_plot))]
-                y_pred_plot = [x_pred_to_plot[i][idx_coordinates[1]-1,:] for i in range(len(x_pred_to_plot))]
-            else:
-                x_pred_plot, y_pred_plot = [], []    
-            x_label = plt_labels[1] + '<sub>' + str(idx_coordinates[0]) + '</sub>'
-            y_label = plt_labels[1] + '<sub>' + str(idx_coordinates[1]) + '</sub>'   
-
-        if len(idx_coordinates) == 3: 
-            if add_surface == True:    
-                surface_dict = self.get_surface(
-                    idx_reduced_coordinates = [1, 2],
-                    idx_observables = idx_coordinates,
-                    surf_margin = surface_margin,
-                    mesh_step = 100
-                )
-                surface_dict['colorscale'] = surface_colorscale
-            else:
-                surface_dict = {}
-            z_plot = [x_to_plot[i][idx_coordinates[2]-1,:] for i in range(len(x_to_plot))]
-            if with_predictions == True:
-                z_pred_plot = [x_pred_to_plot[i][idx_coordinates[2]-1,:] for i in range(len(x_pred_to_plot))]
-            else:
-                z_pred_plot = []    
-            z_label = plt_labels[1] + '<sub>' + str(idx_coordinates[2]) + '</sub>'
-            fig = plot_xyz(
-                x1 = x_plot,
-                y1 = y_plot,
-                z1 = z_plot,
-                x2 = x_pred_plot,
-                y2 = y_pred_plot,
-                z2 = z_pred_plot,
-                font_name = self.font_name, 
-                font_size = self.font_size,
-                axes_labels = [x_label, y_label, z_label],
-                plt_width = plt_width,  
-                plt_height = plt_height,
-                dict_margin = dict_margin,
-                add_surface = add_surface,
-                surface_dict = surface_dict
-            )
-        else:
-            fig = plot_xy(
-                x1 = x_plot,
-                y1 = y_plot,
-                x2 = x_pred_plot,
-                y2 = y_pred_plot,
-                font_name = self.font_name, 
-                font_size = self.font_size,
-                axes_labels = [x_label, y_label],
-                time_plot = time_plot,
-                plt_width = plt_width,  
-                plt_height = plt_height,
-                dict_margin = dict_margin
-            )              
-        return fig
-
+    
 # if __name__ == '__main__':
 #     from ssmlearnpy import SSMLearn
 

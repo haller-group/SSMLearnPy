@@ -4,7 +4,195 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 
+class Plot:
+    """
+    Class for collecting default plot properties and methods
 
+    """
+    def __init__(self,
+        font_name = 'Helvetica', 
+        font_size = 16,
+        label_observables = 'y',
+        label_reduced_coordinates = 'x'
+    ) -> None:
+        self.font_name = font_name
+        self.font_size = font_size
+        self.label_observables = label_observables
+        self.label_reduced_coordinates = label_reduced_coordinates
+        self.plt_labels = {}
+        self.plt_labels['observables'] = label_observables
+        self.plt_labels['reduced_coordinates'] = label_reduced_coordinates
+    
+    
+    def make_plot(
+        self,
+        SSM,
+        data_name = 'observables',
+        data_type = 'values',
+        idx_coordinates = [1],
+        idx_trajectories = 0,
+        with_predictions = False,
+        type_predictions = 'dynamics',
+        t = [],
+        x = [],
+        t_pred = [],
+        x_pred = [],
+        plt_labels = ['time [s]', 'x', ''],
+        plt_width = 560,  
+        plt_height = 420,
+        dict_margin = {},
+        add_surface = False,
+        surface_margin = 10,
+        surface_colorscale = 'agsunset'
+    ) -> None:
+        x_plot, y_plot, z_plot = [], [], []
+        if bool(dict_margin) == False:
+            plt_margins = plt_width / 20
+            dict_margin = dict(l=plt_margins, r=plt_margins, b=plt_margins, t=plt_margins)
+        if bool(x) is False:
+            plt_labels[1] = self.plt_labels[data_name]    
+            if idx_trajectories == 0:
+                t_to_plot = SSM.emb_data['time']
+                x_to_plot = SSM.emb_data[data_name]
+            else:
+                t_to_plot= [SSM.emb_data['time'][i] for i in idx_trajectories]
+                x_to_plot = [SSM.emb_data[data_name][i] for i in idx_trajectories]
+            if data_type == 'errors':
+                with_predictions = True
+            if with_predictions is True:
+                if bool(SSM.predictions) is False:
+                    SSM.predict(idx_trajectories)    
+                if type_predictions == 'dynamics':  
+                    if idx_trajectories == 0:
+                        if data_name == 'observables':
+                            t_pred_to_plot = SSM.predictions['time']
+                            if data_type == 'values':
+                                x_pred_to_plot = SSM.predictions[data_name]
+                            else:
+                                x_pred_to_plot = SSM.predictions[data_type]
+                        else:
+                            t_pred_to_plot = SSM.reduced_dynamics_predictions['time']
+                            if data_type == 'values':
+                                x_pred_to_plot = SSM.reduced_dynamics_predictions[data_name]
+                            else:
+                                x_pred_to_plot = SSM.reduced_dynamics_predictions[data_type]        
+                    else:
+                        if data_name == 'observables':
+                            t_pred_to_plot= [SSM.predictions['time'][i] for i in idx_trajectories]
+                            if data_type == 'values':
+                                x_pred_to_plot = [SSM.predictions[data_name][i] for i in idx_trajectories]   
+                            else:
+                                x_pred_to_plot = [SSM.predictions[data_type][i] for i in idx_trajectories]  
+                        else: 
+                            t_pred_to_plot= [SSM.reduced_dynamics_predictions['time'][i] for i in idx_trajectories]
+                            if data_type == 'values':
+                                x_pred_to_plot = [SSM.reduced_dynamics_predictions[data_name][i] for i in idx_trajectories]   
+                            else:
+                                x_pred_to_plot = [SSM.reduced_dynamics_predictions[data_type][i] for i in idx_trajectories]  
+                else:
+                    if idx_trajectories == 0:
+                        t_pred_to_plot = SSM.geometry_predictions['time']
+                        if data_type == 'values':
+                            x_pred_to_plot = SSM.geometry_predictions[data_name]
+                        else:
+                            x_pred_to_plot = SSM.geometry_predictions[data_type]
+                    else:
+                        t_pred_to_plot= [SSM.geometry_predictions['time'][i] for i in idx_trajectories]
+                        if data_type == 'values':
+                            x_pred_to_plot = [SSM.geometry_predictions[data_name][i] for i in idx_trajectories]    
+                        else:
+                            x_pred_to_plot = [SSM.geometry_predictions[data_type][i] for i in idx_trajectories]  
+                if data_type == 'errors':
+                    t_to_plot, x_to_plot = t_pred_to_plot, x_pred_to_plot
+                    with_predictions = False
+                    if type_predictions == 'dynamics': 
+                        if data_name == 'observables':
+                            plt_labels[1] = 'Errors [%]'
+                        else:
+                            plt_labels[1] = 'Errors Reduced Dynamics [%]'
+                    else:
+                        plt_labels[1] = 'Errors Geometry [%]'
+        else:
+            t_to_plot, t_pred_to_plot, x_to_plot, x_pred_to_plot = t, t_pred, x, x_pred
+
+        if len(idx_coordinates) == 1:
+            time_plot = True
+            x_label = plt_labels[0]
+            x_plot = t_to_plot
+            if len(x_to_plot[0].shape) == 1:
+                y_label = plt_labels[1]
+                y_plot = [x_to_plot[i] for i in range(len(x_to_plot))]
+            else:
+                y_label = plt_labels[1] + '<sub>' + str(idx_coordinates[0]) + '</sub>'
+                y_plot = [x_to_plot[i][idx_coordinates[0]-1,:] for i in range(len(x_to_plot))]
+            if with_predictions == True:
+                x_pred_plot = t_pred_to_plot
+                y_pred_plot = [x_pred_to_plot[i][idx_coordinates[0]-1,:] for i in range(len(x_pred_to_plot))]
+            else:
+                x_pred_plot, y_pred_plot = [], []       
+        else:
+            time_plot = False
+            x_plot = [x_to_plot[i][idx_coordinates[0]-1,:] for i in range(len(x_to_plot))]
+            y_plot = [x_to_plot[i][idx_coordinates[1]-1,:] for i in range(len(x_to_plot))]
+            if with_predictions == True:
+                x_pred_plot = [x_pred_to_plot[i][idx_coordinates[0]-1,:] for i in range(len(x_pred_to_plot))]
+                y_pred_plot = [x_pred_to_plot[i][idx_coordinates[1]-1,:] for i in range(len(x_pred_to_plot))]
+            else:
+                x_pred_plot, y_pred_plot = [], []    
+            x_label = plt_labels[1] + '<sub>' + str(idx_coordinates[0]) + '</sub>'
+            y_label = plt_labels[1] + '<sub>' + str(idx_coordinates[1]) + '</sub>'   
+
+        if len(idx_coordinates) == 3: 
+            if add_surface is True:    
+                surface_dict = SSM.get_surface(
+                    idx_reduced_coordinates = [1, 2],
+                    idx_observables = idx_coordinates,
+                    surf_margin = surface_margin,
+                    mesh_step = 100
+                )
+                surface_dict['colorscale'] = surface_colorscale
+            else:
+                surface_dict = {}
+            z_plot = [x_to_plot[i][idx_coordinates[2]-1,:] for i in range(len(x_to_plot))]
+            if with_predictions is True:
+                z_pred_plot = [x_pred_to_plot[i][idx_coordinates[2]-1,:] for i in range(len(x_pred_to_plot))]
+            else:
+                z_pred_plot = []    
+            z_label = plt_labels[1] + '<sub>' + str(idx_coordinates[2]) + '</sub>'
+            fig = plot_xyz(
+                x1 = x_plot,
+                y1 = y_plot,
+                z1 = z_plot,
+                x2 = x_pred_plot,
+                y2 = y_pred_plot,
+                z2 = z_pred_plot,
+                font_name = self.font_name, 
+                font_size = self.font_size,
+                axes_labels = [x_label, y_label, z_label],
+                plt_width = plt_width,  
+                plt_height = plt_height,
+                dict_margin = dict_margin,
+                add_surface = add_surface,
+                surface_dict = surface_dict
+            )
+        else:
+            fig = plot_xy(
+                x1 = x_plot,
+                y1 = y_plot,
+                x2 = x_pred_plot,
+                y2 = y_pred_plot,
+                font_name = self.font_name, 
+                font_size = self.font_size,
+                axes_labels = [x_label, y_label],
+                time_plot = time_plot,
+                plt_width = plt_width,  
+                plt_height = plt_height,
+                dict_margin = dict_margin
+            )              
+        return fig
+
+
+        
 def plot_xy(
         x1,
         y1,
