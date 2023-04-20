@@ -253,6 +253,17 @@ def fit_reduced_coords_and_parametrization(
     n_targets = X.shape[0]
     n_features = n_dim
     n_linear_coefs = n_targets * n_features # n_samples * n_features
+
+    if poly_degree == 1:
+        # then simply do an svd
+        encoder = LinearChart(n_dim)
+        encoder.fit(X)
+        decoder = Decoder(
+            lambda x : np.matmul(encoder.matrix_representation, x.T).T, # callable function
+            {'coefficients': encoder.matrix_representation.T, 'exponents': np.eye(n_dim)}
+            )
+        return encoder, decoder
+
     if initial_guess is None:
         # compute initial guess: projection matrix from svd
         # and nonlinear coefficients from ridge regression

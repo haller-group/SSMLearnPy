@@ -5,6 +5,7 @@ from sympy import latex
 from IPython.display import display_latex
 from scipy.optimize import minimize
 
+from ssmlearnpy.utils.preprocessing import insert_complex_conjugate
 
 def disp(idx, symObj):
     eqn = '\\[' + idx + ' ' + latex(symObj) + '\\]'
@@ -167,27 +168,24 @@ def extract_FRC(backbone, damping, calibration_amplitude, NonlinearTransform, de
             for iSol in [1, 0]:
                 uTemp = np.zeros((1,nEvalInt))
                 uPhaseTemp = np.zeros((1,nEvalInt))
-                zTemp = np.zeros((1,nEvalInt))
+                zTemp = np.zeros((1,nEvalInt), dtype=complex)
                 for iRho in range(nEvalInt):
                     iOmega = omega_out[-iSol,iRho]
                     timeEval = phiEval/iOmega
                     thetaEval = phiEval + fphase + psi_out[-iSol,iRho]
-                    zEval = rho_out[-iSol,iRho]*np.exp(1j*thetaEval)
-                    etaEval = NonlinearTransform.inverse_transform(zEval.reshape(-1,1))
-                    y = decoder(etaEval)
+                    zEval = (rho_out[-iSol,iRho]*np.exp(1j*thetaEval)).reshape(1,-1)
+                    zEval = insert_complex_conjugate(zEval)
+                    etaEval = NonlinearTransform.transform(zEval)
+                    y = decoder(etaEval.T) # the decoder needs (n_samples, n_features)
                     #yAmplitudeFunction = lambda y : y[observable,:]
-                    yAmplitudeFunction = y[observable,:]
-                    zTemp[iRho] = zEval[0]
-                    uTemp[iRho] = np.max(np.abs(yAmplitudeFunction))
-                    zfTemp = normTimeEval[1]* np.sum( yAmplitudeFunction*(cPhi-1j*sPhi ) )
-                    uPhaseTemp[iRho] = np.arctan2(np.imag(zfTemp), np.real(zfTemp))
+                    yAmplitudeFunction = y[:, observable]
+                    zTemp[0,iRho] = zEval[0,0]
+                    uTemp[0,iRho] = np.max(np.abs(yAmplitudeFunction))
+                    zfTemp = normTimeEval[0]* np.sum( yAmplitudeFunction*(cPhi-1j*sPhi ) )
+                    uPhaseTemp[0,iRho] = np.arctan2(np.imag(zfTemp), np.real(zfTemp))
 
                 z.append(zTemp)
                 u.append(uTemp)
                 uPhase.append(uPhaseTemp)
 
     return rho_out, omega_out, psi_out, z, u, uPhase
-    # rhoSol = roots([fliplr(dampcoeffs(1:end-1)),-(fRed(iAmp)*fscale)]);
-    # rhoSol = sort(abs(rhoSol(imag(rhoSol)==0))); % eliminate spurios
-    # rhoMin = fminsearch(@(r) (freq(r)-sqrt((fRed(iAmp)*fscale./r).^2-damp(r).^2 )).^2,(fRed(iAmp)*fscale)/abs(coeffs(1)));
-    # rhoSol = [rhoMin; rhoSol];

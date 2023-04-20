@@ -23,6 +23,7 @@ We have included a demonstration of SSM computation over the following examples.
 - Vortex Shedding behind a cylinder: data from CFD simulations, projected on a low-dimensional linear subspace of the phase space;
 - Couette flow: data from CFD simulations, projected on a low-dimensional linear subspace of the phase space, for different regimes;
 - Liquid sloshing of a water tank: data from experimental measurements.
+- One degree of freedom oscillator, as a benchmark problem;
 
 ## Installation
 1. Clone the project with 

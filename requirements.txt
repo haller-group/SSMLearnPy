@@ -4,3 +4,5 @@ scikit-learn
 matplotlib
 pandas
 plotly
+jupyter
+findiff
