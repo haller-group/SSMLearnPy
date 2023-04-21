@@ -20,11 +20,46 @@ logger = logging.getLogger("SSMLearn")
 
 class SSMLearn:
     """
-    Write here the main docs of the class
+    Main class to perform SSM-based model reduction of dynamical systems.
+    Contains the trajectory data, the reduced coordinates and the reduced dynamics,
+    as well as methods to map the reduced coordinates to the original ones (encode-decode).
+
+    The class should be initialized with training data that comes from a dynamical system,
+    either given as an ODE or an iterated mapping.
+    
+    The class can also be initialized with a path to a file containing the training data, saved as csv files.
+
+    Helper functions to do full predictions are also implemented. 
+        predict_geometry(): given the reduced coordinates, predict the full system coordinates
+        predict_reduced_dynamics(): advect the reduced coordiantes in time, either by numerical solution of an ODE or iterated mapping
+        predict(): given the reduced coordinates, advect them in time and then predict the full system coordinates
 
     Parameters:
         - t: list of time of the different trajectories, shape=(n_trajectories,)
         - x: list of trajectories, shape=(n_trajectories, )
+        - params: list of parameters of the different trajectories, shape=(n_trajectories, n_params)
+        - reduced_coordinates (optional): list of reduced coordinates of the different trajectories, shape=(n_trajectories, n_reduced_coordinates)
+        - derive_embdedding (optional): if True, delay embedding is used to derive the full system coordinates
+        - ssm_dim: Dimension of the SSM (spectral submanifold)
+        - coordinates_embeddings_args: dictionary of arguments to pass to the coordinates embedding function, such as over_embedding
+        - dynamics_type: type of dynamics to use for the reduced dynamics. Can be 'flow' or 'map'
+        - dynamics_structure: structure of the reduced dynamics
+        - error_metric: metric to use to compute the error between the full and reduced system
+
+    Attributes:
+        - input_data: dictionary containing the raw input data
+        - emb_data: dictionary containing the delay-embedded input data, if derive_embdedding is True. 
+                    Otherwise, emb_data['observables'] = input_data['observables']
+                    emb_data['time'] contains the times at which the trajectories are recorder
+                    emb_data['params'] contains the parameters of the trajectories
+                    emb_data['reduced_coordinates'] contains the reduced coordinates of the trajectories. 
+                            Can be called at initialization, but can be computed from emb_data['observables']
+        - decoder: mapping from the reduced coordinates to the full system coordinates (from emb_data['reduced_coordinates'] to emb_data['observables'])
+        - encoder: mapping from the full system coordinates to the reduced coordinates (from emb_data['observables'] to emb_data['reduced_coordinates'])
+        - reduced_dynamics: reduced dynamics of the system, either a flow or a map
+        - geometry_predictions: dictionary containing the predictions of the full system coordinates
+        - reduced_dynamics_predictions: dictionary containing the predictions of the reduced coordinates
+        - predictions: dictionary containing the joint predictions: predictions of the reduced dynamics followed by prediction of the geometry
     """
     def __init__(
         self,

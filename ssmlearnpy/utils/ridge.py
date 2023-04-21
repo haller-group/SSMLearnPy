@@ -300,7 +300,10 @@ def fit_reduced_coords_and_parametrization(
     joint_coefs = np.concatenate((optimal_linear_coef, optimal_nonlinear_coef), axis=1) 
     powers = generate_exponents(n_features, poly_degree)
     decoder = Decoder(
-        compute_polynomial_map(joint_coefs, poly_degree), # callable function
+        lambda x : compute_polynomial_map(joint_coefs,
+                                           poly_degree)(x.T), # have to transpose once more to be consistent with the ridge regression object
+                                                            # that expects x to be (n_samples, n_features). 
+                                                            # Compute_polynomial_map expects (n_features, n_samples)
         {'coefficients': joint_coefs, 'exponents': powers}
         )
     return encoder, decoder

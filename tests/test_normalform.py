@@ -191,17 +191,7 @@ def test_normalform_transform():
     image = trf.inverse_transform(trajectories)
     inversetransformed = [trf.transform(t) for t in image]
     print([inversetransformed])
-    # plt.plot(np.real(xx[0,:]), np.real(inversetransformed[0][0,:]), '.')
-    # plt.plot(np.real(xx[0,:]), np.real(xx[0,:]), '-')
 
-    # plt.xlabel('True value')
-    # plt.ylabel('Predicted value')
-    # plt.show()
-
-    #target = [nf.LinearPart@t for t in trajectories]
-    #coeffs, callable = ridge.fit_inverse(trf.inverse_transform, trajectories, 5, trajectories_target=target, near_identity=True)
-    #assert np.allclose(coeffs[0,:2], [1,0]) # test the constraint
-    
 
 
 def test_misc_conjugates():
@@ -228,14 +218,14 @@ def test_misc_conjugates():
     print(np.allclose(conj_first, conj_second))
 
 if __name__ == '__main__':
-    #test_misc_conjugates()
-    #test_normalform_nonlinear_coeffs()
-    #test_normalform_lincombinations()
-    ##test_normalform_resonance()
-    #test_nonlinear_change_of_coords()
-    #test_set_dynamics_and_transformation_structure()
-    #test_prepare_normalform_transform_optimization()
-    #test_create_normalform_initial_guess()
+    test_misc_conjugates()
+    test_normalform_nonlinear_coeffs()
+    test_normalform_lincombinations()
+    test_normalform_resonance()
+    test_nonlinear_change_of_coords()
+    test_set_dynamics_and_transformation_structure()
+    test_prepare_normalform_transform_optimization()
+    test_create_normalform_initial_guess()
 
     test_fit_inverse()
     test_normalform_transform()

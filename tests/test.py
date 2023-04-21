@@ -130,7 +130,7 @@ def test_ridge_constrained():
     assert np.allclose(mdl.predict(np.array(constLHS)), np.array(constRHS))
 
 def test_delay_embedding():
-    data = loadmat('../examples/brakereussbeam/data.mat')['data_BRB']
+    #data = loadmat('../examples/brakereussbeam/data.mat')['data_BRB']
 
     TimeDIC = data[0,0].item()[0]
     DisplacementDIC = data[0,0].item()[1]
@@ -146,15 +146,15 @@ def test_delay_embedding():
         ssm_dim=2, 
         dynamics_type = 'flow'
     )
-    referenceData = loadmat('test_BRB_from_ssmlearn.mat')['yData']
+    #referenceData = loadmat('test_BRB_from_ssmlearn.mat')['yData']
     t_y, y, opts_embedding = coordinates_embedding(ssm.emb_data['time'], ssm.emb_data['observables'],
                                                imdim = ssm.ssm_dim, over_embedding = 5)
     assert np.allclose(t_y, referenceData[0,0])
     assert np.allclose(y, referenceData[0,1])
 
 def test_dimensionality_reduction():
-    reference_yData = loadmat('test_BRB_from_ssmlearn.mat')['yData']
-    reference_etaData = loadmat('test_BRB_from_ssmlearn.mat')['etaData']
+    #reference_yData = loadmat('test_BRB_from_ssmlearn.mat')['yData']
+    #reference_etaData = loadmat('test_BRB_from_ssmlearn.mat')['etaData']
     
     ssm = SSMLearn(
         t = [reference_yData[0,0]], 
@@ -238,7 +238,7 @@ if __name__ == '__main__':
     test_ridge_with_or_without_scaling()
     #test_delay_embedding()
     #test_dimensionality_reduction()
-    #test_complex_polynomial_features()
+    test_complex_polynomial_features()
     test_polynomial_features_pattern()
     test_fit_reduced_coords_and_parametrization()
     test_get_fit_ridge_parametric()
