@@ -8,6 +8,7 @@
 
 This package perform data-driven identification of reduced order model based on spectral submanifolds (SSMs). The required input consists of trajectory data of generic system observables close to an SSM, the SSM dimension and the methods for manifold learning and reduced dynamics fitting.
 
+
 The computational steps for achieving a reduced-order model are:
 
 1. Embedding of the simulation/measurement data in a suitable observable space;
@@ -48,6 +49,12 @@ We have included a demonstration of SSM computation over the following examples.
     pip install -e .
     ```
 6. You are ready.
+
+
+## Disclaimer
+
+The implementation and the examples are largely based on the Matlab package SSMLearn https://github.com/mattiacenedese/SSMLearn. The Python implementation is still under active developement and therefore may contain bugs. We apologize for this and welcome any feedback regarding the package. 
+
 
 ## References
 Please consider to cite this article when using this code:
