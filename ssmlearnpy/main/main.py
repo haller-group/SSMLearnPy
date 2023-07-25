@@ -15,6 +15,10 @@ from ssmlearnpy.utils.ridge import get_fit_ridge, fit_reduced_coords_and_paramet
 from ssmlearnpy.utils.ridge import get_matrix
 from ssmlearnpy.utils.file_handler import get_vectors
 from ssmlearnpy.utils.plots import compute_surface
+import ssmlearnpy.reduced_dynamics.normalform as normalform
+from scipy.optimize import minimize, least_squares
+
+
 
 logger = logging.getLogger("SSMLearn")
 
@@ -43,7 +47,7 @@ class SSMLearn:
         - ssm_dim: Dimension of the SSM (spectral submanifold)
         - coordinates_embeddings_args: dictionary of arguments to pass to the coordinates embedding function, such as over_embedding
         - dynamics_type: type of dynamics to use for the reduced dynamics. Can be 'flow' or 'map'
-        - dynamics_structure: structure of the reduced dynamics
+        - dynamics_structure: structure of the reduced dynamics: can be either 'generic' or 'normalform. If normal form is selected, then the reduced dynamics is computed as an extended normal form with a sparse structure. Otherwise, the reduced dynamics is computed as a polynomial map with all coefficients free to be fitted.
         - error_metric: metric to use to compute the error between the full and reduced system
 
     Attributes:
@@ -60,6 +64,7 @@ class SSMLearn:
         - geometry_predictions: dictionary containing the predictions of the full system coordinates
         - reduced_dynamics_predictions: dictionary containing the predictions of the reduced coordinates
         - predictions: dictionary containing the joint predictions: predictions of the reduced dynamics followed by prediction of the geometry
+        - normalform_transformation: NonlinearCoordinateTransform object containing the transformation from the original coordinates to the normal form coordinates. It is fitted when get_reduced_dynamics() is called and dynamics_structure = 'normalform'. 
     """
     def __init__(
         self,
@@ -123,6 +128,7 @@ class SSMLearn:
         self.reduced_dynamics_predictions = {}
         self.predictions = {}
         self.ssm_dim = ssm_dim
+        self.normalform_transformation = None
 
     @staticmethod
     def import_data(path):
@@ -227,8 +233,24 @@ class SSMLearn:
 
     def get_reduced_dynamics(
         self,
+        normalform_args = {'degree': 3, 'do_scaling' : True,
+                            'tolerance': None, 'ic_style': 'random', 
+                            'max_iter': 1000, 'method': 'lm',
+                              'jac': '2-point'},
         **regression_args
     ) -> None:
+        """Compute the reduced dynamics from the data supplied to the class.
+
+        Paramters:
+            normalform_args (dict, optional): Contains all normal form related arguments. Defaults to {}.
+                - normalform_args['degree']
+                - normalform_args['do_scaling']
+                - normalform_args['tolerance']
+                - normalform_args['ic_style']: Can be random, informed or zero. If informed, then an initial guess is computed from the initial regression.
+                - normalform_args['max_iter']: Maximum number of iterations for the optimization
+                - normalform_args['method']: method to be passed to the least_squares function
+                - normalform_args['jac']: jacobian to be passed to the least_squares function
+         """
         X, y = shift_or_differentiate(
             self.emb_data['reduced_coordinates'], 
             self.emb_data['time'], 
@@ -247,10 +269,49 @@ class SSMLearn:
                 y,
                 **regression_args
             )
-        lin_part = self.reduced_dynamics.map_info['coefficients'][:,:X[0].shape[0]]
-        d, v = np.linalg.eig(lin_part)
-        self.reduced_dynamics.map_info['eigenvalues_lin_part'] = d
-        self.reduced_dynamics.map_info['eigenvectors_lin_part'] = v
+        linear_part = self.reduced_dynamics.map_info['coefficients'][:,:X[0].shape[0]]
+        d, v = np.linalg.eig(linear_part)
+        self.reduced_dynamics.map_info['eigenvalues_linear_part'] = d
+        self.reduced_dynamics.map_info['eigenvectors_linear_part'] = v
+
+        if self.dynamics_structure == 'normalform': # compute the normal form transformation after an initial guess has been computed
+            ndofs = int(linear_part.shape[0] / 2)
+            if self.ssm_dim % 2 != 0:
+                raise NotImplementedError(
+                    (
+                        f"Normal form transformation not implemented for odd dimensions."
+                    )
+                )
+            nf_object, n_unknowns_dynamics, n_unknowns_transformation, objective = normalform.create_normalform_transform_objective(
+                self.emb_data['time'],
+                  self.emb_data['reduced_coordinates'],
+                  linear_part, degree = normalform_args['degree'],
+                  do_scaling = normalform_args['do_scaling'],
+                  tolerance = normalform_args['tolerance'])
+            
+            # create 3 kinds of initial guesses:
+            if normalform_args['ic_style'] == 'random':
+                initial_guess = np.random.rand((n_unknowns_dynamics + n_unknowns_transformation) * 2) # both real and imaginary parts
+            elif normalform_args['ic_style'] == 'informed':
+                initial_guess = normalform.create_normalform_initial_guess(self.reduced_dynamics, nf_object)
+            elif normalform_args['ic_style'] == 'zero':
+                initial_guess = np.zeros((n_unknowns_dynamics + n_unknowns_transformation) * 2) 
+            
+            res = least_squares(objective, 
+                                initial_guess,
+                                  method=normalform_args['method'],
+                                    jac=normalform_args['jac'], 
+                                    max_nfev=normalform_args['max_iter'])
+            unpacked_coeffs = normalform.unpack_optimized_coeffs(res.x, ndofs, nf_object, n_unknowns_dynamics, n_unknowns_transformation)
+            transformation, dynamics = normalform.wrap_optimized_coefficients(ndofs,
+                                                                                             nf_object, normalform_args['degree'],
+                                                                                               unpacked_coeffs, find_inverse = True,
+                                                                                                trajectories = self.emb_data['reduced_coordinates'])
+            self.normalform_transformation = transformation
+            self.reduced_dynamics = dynamics
+            self.reduced_dynamics.map_info['normalform_transformation'] = transformation
+        return
+
 
     def predict_geometry(
         self,
@@ -270,7 +331,7 @@ class SSMLearn:
                 x_to_predict = [self.emb_data['observables'][i] for i in idx_trajectories]
 
             x_predict = decode_geometry(
-                self.decoder.predict,
+                self.decode,
                 x_reduced)
             
             prediction_errors = compute_errors(
@@ -286,11 +347,11 @@ class SSMLearn:
         else:
             if bool(x_reduced) is False:
                 x_reduced = encode_geometry(
-                self.encoder.predict,
+                self.encode,
                 x)  
 
             x_predict = decode_geometry(
-                self.decoder.predict,
+                self.decode,
                 x_reduced)
 
             prediction_errors = compute_errors(
@@ -377,7 +438,7 @@ class SSMLearn:
                 self.predict_reduced_dynamics(idx_trajectories)
 
             x_predict = decode_geometry(
-                self.decoder.predict,
+                self.decode,
                 self.reduced_dynamics_predictions['reduced_coordinates'])
 
             prediction_errors = compute_errors(
@@ -406,7 +467,7 @@ class SSMLearn:
             x_reduced_predict = reduced_dynamics_predictions['reduced_coordinates']
 
             x_predict = decode_geometry(
-                self.decoder.predict,
+                self.decode,
                 x_reduced_predict)
 
             prediction_errors = compute_errors(
