@@ -135,9 +135,17 @@ class SSMLearn:
 
     def get_reduced_coordinates(
         self,
-        method,
+        method = 'linearchart',
         **keyargs
     ) -> None:
+        """
+        Compute the reduced coordinates of the trajectories using the given method.
+        method: can be 'basic', 'linearchart' or 'fastssm'.
+            basic: use the first ssm_dim coordinates of the delay-embedded trajectories
+            linearchart: perform an SVD and keep the first ssm_dim coordinates
+            fastssm: same as linearchart. We keep the name fastssm to be consistent with the matlab implementation
+        If the reduced coordinates have already been computed, skip.
+        """
         self.encoder = reduce_dimensions(
             method=method,
             n_dim = self.ssm_dim,
@@ -145,7 +153,7 @@ class SSMLearn:
         )
         if self.emb_data['reduced_coordinates'] is None:
             self.encoder.fit(self.emb_data['observables'])
-            self.emb_data['reduced_coordinates']=self.encoder.predict(self.emb_data['observables'])
+            self.emb_data['reduced_coordinates'] = self.encoder.predict(self.emb_data['observables'])
         else:
             logger.info("Reduced coordinated already passed to SSMLearn, skipping.")
 
@@ -171,6 +179,22 @@ class SSMLearn:
                                                                                  self.ssm_dim, **regression_args) # get both decoder and encoder
             self.emb_data['reduced_coordinates'] = [self.encoder.predict(trajectory)
                                                      for trajectory in self.emb_data['observables']]
+            
+        return
+    
+    def encode(self, x):
+        """ wrapper for encoder.predict. Expects a trajectory of shape (n_features, n_samples)
+            returns the reduced coordinates of shape (n_dim, n_samples)
+        """
+        return self.encoder.predict(x)
+
+    def decode(self, y):
+        """ wrapper for decoder.predict. Expects a reduced trajectory of shape (n_dim, n_samples)
+            returns the full trajectory of shape (n_features, n_samples)
+        """
+        return (self.decoder.predict(y.T)).T
+
+
     def get_surface(
         self,
         idx_reduced_coordinates = [1, 2],
@@ -396,16 +420,3 @@ class SSMLearn:
             predictions['observables'] = x_predict
             predictions['errors'] = prediction_errors
             return predictions
-
-    
-# if __name__ == '__main__':
-#     from ssmlearnpy import SSMLearn
-
-#     ssm = SSMLearn(
-#         path_to_trajectories = '/Users/albertocenedese/Desktop/ssmlearnpy/datasets/Trajectories',
-#         ssm_dim=2
-#     )
-
-#     ssm.get_latent_coordinates(method='basic', n_dim=2)
-
-#     ssm.get_parametrization(poly_degree=18)

@@ -101,9 +101,7 @@ def compute_polynomial_map(
             # the transposes are necessary because a ridge model expects a matrix of shape (n_samples, n_features)
             # because of the projection we need x to be (n_features, n_samples).
             # in order to also produce a matrix of shape (n_samples, n_features), we need to transpose a lot. 
-            # TODO: probably there is a smarter way
             y = np.matmul(linear_transform, x) 
-            #print(y.shape, x.shape)
             y_features = complex_polynomial_features(y.T, degree=degree, 
                                                              include_bias = include_bias,
                                                              skip_linear = skip_linear)
@@ -115,10 +113,10 @@ def compute_polynomial_map(
         return linear_transform_first
     else: 
         # here x is assumed to be a matrix of shape (n_features, n_samples)
-        return lambda x : np.matmul(coefficients,
-                                    complex_polynomial_features(x.T, degree=degree, 
+        return lambda x : np.matmul(complex_polynomial_features(x.T, degree=degree, 
                                                                 include_bias = include_bias,
-                                                                skip_linear=skip_linear).T).T 
+                                                                skip_linear=skip_linear), 
+                                                                coefficients.T).T 
 
 def insert_complex_conjugate(x):
     return np.concatenate((x, np.conj(x)), axis = 0)

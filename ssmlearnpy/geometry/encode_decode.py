@@ -13,5 +13,5 @@ def decode_geometry(
     ):
     x = []
     for i_elem in range(len(x_reduced)):
-        x.append(decoder(x_reduced[i_elem].T).T)
+        x.append(decoder(x_reduced[i_elem]))
     return x    

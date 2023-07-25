@@ -239,7 +239,7 @@ def fit_reduced_coords_and_parametrization(
     alpha: list=0,
     cv: int=2,
     initial_guess = None,
-    penalty_linear_cons =1e-5,
+    penalty_linear_cons = 1e-5,
     penalty_nonlinear_cons =1e-5,
     **optimize_kwargs
 ):
@@ -301,7 +301,7 @@ def fit_reduced_coords_and_parametrization(
     powers = generate_exponents(n_features, poly_degree)
     decoder = Decoder(
         lambda x : compute_polynomial_map(joint_coefs,
-                                           poly_degree)(x.T), # have to transpose once more to be consistent with the ridge regression object
+                                           poly_degree)(x.T).T, # have to transpose once more to be consistent with the ridge regression object
                                                             # that expects x to be (n_samples, n_features). 
                                                             # Compute_polynomial_map expects (n_features, n_samples)
         {'coefficients': joint_coefs, 'exponents': powers}
@@ -342,6 +342,7 @@ def add_constraints(
 ):
     const_lhs, const_rhs = constraints
     for l, r in zip(const_lhs, const_rhs):
+        
         lhs = np.array(l).reshape(-1,1)
         rhs = np.array(r).reshape(-1,1)
         X = np.append(X, lhs, axis = 1)
