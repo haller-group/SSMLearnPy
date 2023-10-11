@@ -29,7 +29,7 @@ We have included a demonstration of SSM computation over the following examples.
 ## Installation
 1. Clone the project with 
     ```sh
-    git clone git@github.com:mattiacenedese/SSMLearnPy.git
+    git clone https://github.com/mattiacenedese/SSMLearnPy.git
     ```
 2. Enter in the project folder 
     ```sh
