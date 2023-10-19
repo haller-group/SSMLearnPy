@@ -68,5 +68,5 @@ Additional works appear in the references:
 - G. Haller, S. Jain and M. Cenedese. Dynamics-based machine learning for nonlinearizable phenomena. Data-driven reduced models on spectral submanifolds, [*SIAM News*](https://sinews.siam.org/Details-Page/dynamics-based-machine-learning-for-nonlinearizable-phenomena) **55/5** (2022) 20210194. [[PDF]](http://www.georgehaller.com/reprints/HallerJainCenedese_dynamics_based_machine_learning.pdf) 
 
 - B. Kaszás, M. Cenedese & G. Haller, Dynamics-based machine learning of transitions in Couette flow, [*Physical Review Fluids*](https://link.aps.org/doi/10.1103/PhysRevFluids.7.L082402), **7** (2022) L082402. [[PDF]](http://www.georgehaller.com/reprints/dynamicsbasedmachinelearning.pdf) [[Supplemental Material]](http://www.georgehaller.com/reprints/dynamicsbasedmachinelearning_supp.pdf)
-
-- J.I. Alora, M. Cenedese, E. Schmerling, G. Haller & M. Pavone, Data-driven spectral submanifold reduction for nonlinear optimal control of high-dimensional robots (2022) [*arxiv.org/2209.0571*](https://arxiv.org/2209.0571). [[PDF]](https://arxiv.org/pdf/2209.0571.pdf) 
+https://arxiv.org/abs/2209.05712
+- J.I. Alora, M. Cenedese, E. Schmerling, G. Haller & M. Pavone, Data-driven spectral submanifold reduction for nonlinear optimal control of high-dimensional robots (2022) [*arxiv.org/2209.05712*](https://arxiv.org/2209.05712). [[PDF](https://arxiv.org/pdf/2209.05712.pdf)
