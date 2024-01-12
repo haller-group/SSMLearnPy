@@ -250,6 +250,7 @@ class SSMLearn:
                 - normalform_args['max_iter']: Maximum number of iterations for the optimization
                 - normalform_args['method']: method to be passed to the least_squares function
                 - normalform_args['jac']: jacobian to be passed to the least_squares function
+                - normalform_args['use_center_manifold_style']: if True, then the center manifold style is used to compute the normal form transformation.
          """
         X, y = shift_or_differentiate(
             self.emb_data['reduced_coordinates'], 
@@ -287,7 +288,8 @@ class SSMLearn:
                   self.emb_data['reduced_coordinates'],
                   linear_part, degree = normalform_args['degree'],
                   do_scaling = normalform_args['do_scaling'],
-                  tolerance = normalform_args['tolerance'])
+                  tolerance = normalform_args['tolerance'],
+                  use_center_manifold_style = normalform_args['use_center_manifold_style'])
             
             # create 3 kinds of initial guesses:
             if normalform_args['ic_style'] == 'random':

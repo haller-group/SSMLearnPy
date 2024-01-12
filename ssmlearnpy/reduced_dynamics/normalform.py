@@ -149,24 +149,30 @@ class NormalForm:
 
     def _eigenvalue_lin_combinations(
         self,
-        degree=3
+        degree=3,
+        use_center_manifold_style = False
     ):
         """
         Construct the matrix made up of linear combinations of eigenvalues. For more info see e. g. M. Cenedese (2021)
         """
+        if use_center_manifold_style:
+            LinearPart = np.imag(self.LinearPart)
+        else:
+            LinearPart = self.LinearPart
         coeffs_for_exponents = self._nonlinear_coeffs(degree)
-        return np.repeat(np.diag(self.LinearPart).reshape(-1, 1),
+        return np.repeat(np.diag(LinearPart).reshape(-1, 1),
                          coeffs_for_exponents.shape[1], axis=1) - \
-            np.matmul(np.diag(self.LinearPart), coeffs_for_exponents)
+            np.matmul(np.diag(LinearPart), coeffs_for_exponents)
 
     def _resonance_condition(
         self,
-        degree=3
+        degree=3,
+        use_center_manifold_style = False
     ):
         """
         Check if the eigenvalue linear combinations satisfy the resonance condition
         """
-        lincombs = self._eigenvalue_lin_combinations(degree)
+        lincombs = self._eigenvalue_lin_combinations(degree, use_center_manifold_style = use_center_manifold_style)
         return np.abs(lincombs) < self.tolerance  # return a boolean array
     
     def scale_diagonalizing_matrix(self, scaling_matrix):
@@ -175,7 +181,8 @@ class NormalForm:
     def set_dynamics_and_transformation_structure(
         self,
         type='flow',
-        degree=3
+        degree=3,
+        use_center_manifold_style = False
     ):
         
         if type != 'flow':
@@ -186,7 +193,7 @@ class NormalForm:
         ndofs = int(size / 2)
         # assumes that the first half of the coordinates are the real part and the second half the imaginary part.
         # sparse structure for the nonlinearities
-        N_structure = self._resonance_condition(degree)[:ndofs, :]
+        N_structure = self._resonance_condition(degree, use_center_manifold_style = use_center_manifold_style)[:ndofs, :]
         # if there is a 1 in the structure matrix, we keep the corresponding column ~ logical or
         self.dynamics_structure = np.sum(
             N_structure, axis=0).astype(dtype=bool)
@@ -203,6 +210,7 @@ def prepare_normalform_transform_optimization(
     degree = 3,
     do_scaling = True,
     tolerance = None,
+    use_center_manifold_style = False
 ):
     """
     Precompute terms for the optimization problem
@@ -214,6 +222,7 @@ def prepare_normalform_transform_optimization(
         degree: max. degree of the polynomial transformation
         do_scaling: if True, the transformation is scaled to yield modal coordinates of amplitude 1/2
         tolerance : tolerance for the resonance condition
+        use_center_manifold_style: if True, all resonances are eliminated that would be present in a center manifold calculation. 
     Returns:
         linear error
         Dynamics_normalform_polynomial_features: list of non-zero polynomial features of the trajectories included in the normal form dynamics
@@ -231,7 +240,7 @@ def prepare_normalform_transform_optimization(
         scaling_matrix = rescale_linear_part(normalform.diagonalizing_matrix, trajectories)
         normalform.scale_diagonalizing_matrix(scaling_matrix)
 
-    normalform.set_dynamics_and_transformation_structure(type, degree)
+    normalform.set_dynamics_and_transformation_structure(type, degree, use_center_manifold_style=use_center_manifold_style)
     # check if the normal form is applicable. If there are real eigenvalues, raise an error
     if np.allclose(np.imag(np.diag(normalform.LinearPart)), 0):
         raise ValueError(
@@ -294,7 +303,8 @@ def create_normalform_transform_objective(
     type='flow',
     degree=3,
     do_scaling = True,
-    tolerance=None
+    tolerance=None,
+    use_center_manifold_style = False
 ):
     """
     Minimize
@@ -326,14 +336,15 @@ def create_normalform_transform_objective(
                                                                                                                  type,
                                                                                                                  degree,
                                                                                                                  do_scaling=do_scaling,
-                                                                                                                   tolerance=tolerance)
+                                                                                                                   tolerance=tolerance,
+                                                                                                                   use_center_manifold_style = use_center_manifold_style)
     # set up optimization
     size = Linearpart.shape[0]
     # only consider the first half of the coordinates: conjugates are discarded
     ndofs = int(size / 2)
     # set up optimization
-    n_unknowns_dynamics = np.sum(normalform.dynamics_structure)
-    n_unknowns_transformation = transformation_normalform_polynomial_features[0].shape[0]
+    n_unknowns_dynamics = np.sum(normalform.dynamics_structure) #* nodfs
+    n_unknowns_transformation = transformation_normalform_polynomial_features[0].shape[0] #* ndofs  # need to create a matrix of shape (ndofs, transformation_normalform_polynomial_features[0])
     def objective(x):  # x is purely real
         # convert to complex form. First half is real, second half is imaginary
         n_unknowns = int(len(x) / 2)
