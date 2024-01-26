@@ -7,7 +7,7 @@ import pkg_resources
 from .base.apipkg import initpkg
 
 __all__ = ('__version__', )
-__version__ = pkg_resources.get_distribution('ssmlearnpy').version
+__version__ = '1.0'
 
 initpkg(
     __name__,
