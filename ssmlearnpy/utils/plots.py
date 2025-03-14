@@ -3,7 +3,7 @@ import logging
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-import ipdb
+from typing import Callable
 
 
 class Plot:
@@ -421,7 +421,7 @@ def plot_xyz(
 
 
 def compute_surface(
-    surface_function=[],
+    surface_function=Callable,
     idx_reduced_coordinates=[1, 2],
     transf_mesh_generation=0,
     idx_observables=[1],
@@ -439,7 +439,8 @@ def compute_surface(
         ]
     )
     x_reduced_surf = np.matmul(transf_mesh_generation, x_data)
-    x_full_surf = surface_function(x_reduced_surf.T).T
+    # TODO verify that removing the transposes is correct
+    x_full_surf = surface_function(x_reduced_surf)
 
     if len(idx_observables) == 1:
         x_vec = x_reduced_surf[idx_reduced_coordinates[0] - 1, :]

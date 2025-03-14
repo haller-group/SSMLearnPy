@@ -48,7 +48,8 @@ def display_equation(coeffs, power, base_symbol="x", complex=False):
         n_indep_variables = int(n_variables / 2)  # half of them should be conjugates
         variables_conjugate = [
             # TODO remove latex formatting
-            sy.symbols("\\bar{%s}_%d" % (base_symbol, i))
+            # sy.symbols("\\bar{%s}_%d" % (base_symbol, i))
+            sy.symbols(f"bar_{base_symbol}_{i}")
             for i in range(n_indep_variables)
         ]
         equations = [
@@ -87,7 +88,8 @@ def convert_to_polar(variables, equations):
     n_polar_variables = int(n_variables / 2)
     # TODO may have to remove the latex formatting
     radial_variables = [sy.symbols("r_%d" % i) for i in range(n_polar_variables)]
-    angle_variables = [sy.symbols("\\varphi_%d" % i) for i in range(n_polar_variables)]
+    # angle_variables = [sy.symbols("\\varphi_%d" % i) for i in range(n_polar_variables)]
+    angle_variables = [sy.symbols(f"phi_{i}") for i in range(n_polar_variables)]
 
     substituted_equations = []
 

@@ -7,6 +7,7 @@ from sklearn.preprocessing import PolynomialFeatures
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import Ridge
 from sklearn.linear_model import RidgeCV
+from sklearn.base import BaseEstimator, TransformerMixin
 from ssmlearnpy.utils.preprocessing import (
     get_matrix,
     generate_exponents,
@@ -29,6 +30,7 @@ logger = logging.getLogger("ridge_regression")
 def get_fit_ridge(
     X,
     y,
+    offset: np.ndarray = None,
     constraints: list = None,
     do_scaling: bool = True,
     poly_degree: int = 2,
@@ -41,12 +43,16 @@ def get_fit_ridge(
     ----------
         X: (n_features, n_samples) or list
         y: (n_outputs, n_samples) or list
+        offset: np.ndarray, offset to be added to the data in the observable space (eg. to
+                shift the fixed point from the origin to its physical location). Use this
+                (and NOT fit_intercept) if you already know the correct offset.
         constraints: list of lists: [LHS, RHS] such that model.predict(LHS[i]) == RHS[i].
                  model.predict(LHS[i]) and RHS[i] should have the same shape
         do_scaling: bool, whether to apply a StandardScaler to the data before fitting
         poly_degree: int, degree of the polynomial to fit
         fit_intercept: bool, whether to include the constant term in the regression
-                        if False, this means that the model will be forced to pass through the origin
+                        if False, this means that the model will be forced to pass through the origin.
+                        Use this if you want to add an offset but don't know it apriori.
         alpha: float or list of floats, regularization parameter
         cv: int, number of folds for cross validation. If cv>=2, alpha must be a list
     Returns:
