@@ -289,6 +289,7 @@ def prepare_normalform_transform_optimization(
         [l[:ndofs, :] for l in linear_error],
         transformation_normalform_polynomial_features,
         transformation_normalform_polynomial_features_timederivative,
+        dy_dt,
     )
 
 
@@ -343,25 +344,49 @@ def eval_complex_poly(y, powers):
     return features
 
 
-def eval_poly_deriv(y, powers):
+def eval_poly_deriv(y, powers, degree):
     """
     This function calculates the derivative of a polynomial
-    of y in C^2. It is assumed that y = [y,y_conjugate] and that
-    therefore d(poly(y))/dy_conjugate is identically zero. Therefore the
-    returned jacobian has dimension Nxfeaturesx1
+    of y in C^2.
     """
+
+    all_powers = (
+        PolynomialFeatures(degree=degree, include_bias=False)
+        .fit(np.ones((1, y.shape[0])))
+        .powers_
+    )
+
+    power_map = {tuple(all_powers[i]): i for i in range(all_powers.shape[0])}
+
+    # Powers has shape (num_features, 2)
     # Assume y has shape (n_features, n_samples)
-    features = eval_complex_poly(y, powers)
+    features = complex_polynomial_features(y.T, degree).T
     # This is needed for 3D matrix multiplication, where the batch dimension
     # is expected to be first
-    # derivs = np.empty(y.shape[1], )
+
+    # (N, #poly_features, dim(y))
+    derivs = np.zeros((y.shape[1], powers.shape[0], y.shape[0]))
+
+    for i in range(powers.shape[0]):
+        # For each polynomial feature, we need to calculate the derivative
+        # with respect to each dimension of y
+        for j in range(y.shape[0]):
+            # Calculate the derivative of the polynomial feature with respect to y[j]
+            scalar = powers[i, j]
+            if scalar < 1:
+                continue
+            new_power = powers[i, :].copy()
+            new_power[j] -= 1
+            derivs[:, i, j] = scalar * features[power_map[tuple(new_power)], :]
+
+    return derivs
 
 
 @numba.njit(fastmath=True, cache=True)
 def objective_optimized(
     x: np.ndarray,
     trajs: np.ndarray,
-    offsets: np.ndarray,
+    # offsets: np.ndarray,
     z: np.ndarray,
     complex_error: np.ndarray,
     # real_error: np.ndarray,
@@ -370,7 +395,7 @@ def objective_optimized(
     transform_poly_feats_deriv: np.ndarray,
     linear_dynamics: np.ndarray,
     dynamics_structure: np.ndarray,
-    powers: list,
+    powers: np.ndarray,
 ):
     """Numba-optimized objective function"""
     # Reconstruct complex arrays from pre-split components
@@ -441,6 +466,7 @@ def create_normalform_transform_objective_optimized(
         linear_error,
         poly_feats,
         poly_feats_deriv,
+        dy_dt,
     ) = prepare_normalform_transform_optimization(
         times,
         trajectories,
@@ -454,14 +480,16 @@ def create_normalform_transform_objective_optimized(
 
     ndofs = Linearpart.shape[0] // 2
     total_samples = sum([t.shape[1] for t in trajectories])
-    trajs = np.zeros((ndofs, total_samples), dtype=complex)
-    offsets = np.zeros(len(trajectories) + 1, dtype=int)
-    offsets[1:] = np.cumsum([t.shape[1] for t in trajectories])
-    for i, t in enumerate(trajectories):
-        trajs[:, offsets[i] : offsets[i + 1]] = t[:ndofs, :]
+    # trajs = np.zeros((ndofs, total_samples), dtype=complex)
+    # offsets = np.zeros(len(trajectories) + 1, dtype=int)
+    # offsets[1:] = np.cumsum([t.shape[1] for t in trajectories])
+    # for i, t in enumerate(trajectories):
+    #     trajs[:, offsets[i] : offsets[i + 1]] = t[:ndofs, :]
+    trajs = np.concatenate(trajectories, axis=1)
     transform_poly_feats = np.concatenate(poly_feats, axis=1)
-    transform_poly_feats_deriv = np.concatenate(poly_feats_deriv, axis=1)
+    # transform_poly_feats_deriv = np.concatenate(poly_feats_deriv, axis=1)
     linear_error = np.concatenate(linear_error, axis=1)
+    dy_dt = np.concatenate(dy_dt, axis=1)
 
     # Preallocate memory
     z = np.empty((ndofs * 2, total_samples), dtype=complex)
@@ -476,20 +504,26 @@ def create_normalform_transform_objective_optimized(
         .powers_
     )
     powers = powers[ndofs * 2 :, :]  # cut the linear part
-    powers = powers[normalform.dynamics_structure, :]
+    dyn_powers = powers[normalform.dynamics_structure, :]
+
+    poly_derivs = (
+        eval_poly_deriv(trajs, powers[~normalform.dynamics_structure, :], degree)
+        @ dy_dt[:, :, None].transpose(1, 0, 2)
+    )[..., 0].T
 
     objective_dict = {
-        "trajs": trajs,
-        "offsets": offsets,
+        "trajs": trajs[:ndofs, :],
+        # "offsets": offsets,
         "z": z,
         "complex_error": complex_error,
         # "real_error": real_error,
         "linear_error": linear_error,
         "transform_poly_feats": transform_poly_feats,
-        "transform_poly_feats_deriv": transform_poly_feats_deriv,
+        # "transform_poly_feats_deriv": transform_poly_feats_deriv,
+        "transform_poly_feats_deriv": poly_derivs,
         "linear_dynamics": normalform.LinearPart[:ndofs, :ndofs],
         "dynamics_structure": normalform.dynamics_structure,
-        "powers": powers,
+        "powers": dyn_powers,
     }
 
     # Create optimized objective
