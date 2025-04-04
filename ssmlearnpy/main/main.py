@@ -22,6 +22,8 @@ from ssmlearnpy.utils.plots import compute_surface
 import ssmlearnpy.reduced_dynamics.normalform as normalform
 from scipy.optimize import minimize, least_squares
 from copy import deepcopy
+from typing import Literal
+import ipdb
 
 
 logger = logging.getLogger("SSMLearn")
@@ -84,7 +86,7 @@ class SSMLearn:
         ssm_dim: int = None,
         coordinates_embeddings_args: dict = {},
         dynamics_type="flow",
-        dynamics_structure="generic",
+        dynamics_structure: str = Literal["generic", "normalform"],
         error_metric="NTE",
     ) -> None:
         self.input_data = {}
@@ -293,18 +295,20 @@ class SSMLearn:
                 raise NotImplementedError(
                     (f"Normal form transformation not implemented for odd dimensions.")
                 )
-            nf_object, n_unknowns_dynamics, n_unknowns_transformation, objective = (
-                normalform.create_normalform_transform_objective(
-                    self.emb_data["time"],
-                    self.emb_data["reduced_coordinates"],
-                    linear_part,
-                    degree=normalform_args["degree"],
-                    do_scaling=normalform_args["do_scaling"],
-                    tolerance=normalform_args["tolerance"],
-                    use_center_manifold_style=normalform_args[
-                        "use_center_manifold_style"
-                    ],
-                )
+            (
+                nf_object,
+                # objective_dict,
+                n_unknowns_dynamics,
+                n_unknowns_transformation,
+                objective,
+            ) = normalform.create_normalform_transform_objective_optimized(
+                self.emb_data["time"],
+                self.emb_data["reduced_coordinates"],
+                linear_part,
+                degree=normalform_args["degree"],
+                do_scaling=normalform_args["do_scaling"],
+                tolerance=normalform_args["tolerance"],
+                use_center_manifold_style=normalform_args["use_center_manifold_style"],
             )
 
             # create 3 kinds of initial guesses:
@@ -320,6 +324,10 @@ class SSMLearn:
                 initial_guess = np.zeros(
                     (n_unknowns_dynamics + n_unknowns_transformation) * 2
                 )
+            # TODO remove
+            # initial_guess = (
+            #     np.ones((n_unknowns_dynamics + n_unknowns_transformation) * 2) * 0.1
+            # )
 
             res = least_squares(
                 objective,
@@ -327,7 +335,17 @@ class SSMLearn:
                 method=normalform_args["method"],
                 jac=normalform_args["jac"],
                 max_nfev=normalform_args["max_iter"],
+                # max_nfev=1,
             )
+            if not res.success:
+                print(f"Optimization did not converge. Message: {res.message}")
+                logger.error((f"Optimization did not converge. Message: {res.message}"))
+            else:
+                # ipdb.set_trace()
+                logger.info((f"Optimization converged. Message: {res.message}"))
+                print(f"Optimization converged. Message: {res.message}")
+                print(f"Number of iterations: {res.nfev}")
+                logger.info(f"Number of iterations: {res.nfev}")
             unpacked_coeffs = normalform.unpack_optimized_coeffs(
                 res.x, ndofs, nf_object, n_unknowns_dynamics, n_unknowns_transformation
             )

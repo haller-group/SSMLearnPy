@@ -20,7 +20,7 @@ from ssmlearnpy.utils.preprocessing import (
     compute_polynomial_map,
     unpack_coefficient_matrices_from_vector,
 )
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 from scipy.optimize import minimize, least_squares, lsq_linear
 
 
@@ -37,6 +37,7 @@ def get_fit_ridge(
     fit_intercept: bool = False,
     alpha: list = 0,
     cv: int = 2,
+    weight_fp: Optional[int] = None,
 ):
     """Fit a ridge regression model to the data.
     Parameters:
@@ -107,6 +108,14 @@ def get_fit_ridge(
         X, y, sample_weight = add_constraints(
             X, y, constraints, sample_weight, weight=1e10
         )
+
+    if weight_fp is not None:
+        # Get range of first dimension
+        x_range = np.max(X[0]) - np.min(X[0])
+        # Find indices where first dimension is within 10% of the range (assumes X is centered)
+        idx = np.where(np.abs(X[0]) < 0.1 * x_range)
+        # Increase the weight for these indices
+        sample_weight[idx] = weight_fp
 
     # mdl.predict() expects the matrix in the form (n_samples, n_features)
     mdl.fit(X.T, y.T, ridge_regressor__sample_weight=sample_weight)

@@ -87,10 +87,10 @@ def coordinates_embedding(
             y_base = x_i[:, subsample]
 
             for i_rep in range(1, n_n):
-                y_i = np.concatenate((y_i, np.roll(y_base, -i_rep)))
+                y_i = np.concatenate((y_i, np.roll(y_base, -i_rep * shift_steps)))
 
-            y.append(y_i[:, : -n_n + 1])
-            t_y.append(t_i[subsample[: -n_n + 1]])
+            y.append(y_i[:, : -n_n * shift_steps + 1])
+            t_y.append(t_i[subsample[: -n_n * shift_steps + 1]])
         embedded_offset = np.tile(_offset, n_n)
 
     else:

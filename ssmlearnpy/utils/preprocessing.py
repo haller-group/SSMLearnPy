@@ -47,6 +47,7 @@ def complex_polynomial_features(
         np.ones((1, size))
     )
     powers = p.powers_
+
     if skip_linear and not include_bias:
         powers = powers[size:, :]
     if skip_linear and include_bias:
@@ -63,6 +64,7 @@ def complex_polynomial_features(
         for i, p in enumerate(power):
             prod *= y[:, i] ** p
         features.append(prod)  # this produces rows, so have to transpose in the end
+    # ipdb.set_trace()
     return np.array(
         features
     ).T  # transpose to get consistent shape with PolynomialFeatures

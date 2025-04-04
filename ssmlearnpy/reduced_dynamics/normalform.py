@@ -12,6 +12,9 @@ from ssmlearnpy.utils.preprocessing import (
 )
 from ssmlearnpy.utils import ridge
 from typing import NamedTuple, Callable, Dict, Optional
+from numba import jit, float64, complex128, prange
+import numba
+import ipdb
 
 
 class NonlinearCoordinateTransform:
@@ -324,6 +327,190 @@ def create_normalform_initial_guess(
     )
 
 
+@numba.njit(fastmath=True, cache=True)
+def eval_complex_poly(y, powers):
+    n_features, n_samples = y.shape
+    n_terms = powers.shape[0]
+    features = np.empty((n_terms, n_samples), dtype=np.complex128)
+
+    for i in range(n_terms):
+        prod = np.ones(n_samples, dtype=np.complex128)
+        for j in range(n_features):
+            if powers[i, j] > 0:
+                prod *= y[j, :] ** powers[i, j]
+        features[i, :] = prod
+
+    return features
+
+
+def eval_poly_deriv(y, powers):
+    """
+    This function calculates the derivative of a polynomial
+    of y in C^2. It is assumed that y = [y,y_conjugate] and that
+    therefore d(poly(y))/dy_conjugate is identically zero. Therefore the
+    returned jacobian has dimension Nxfeaturesx1
+    """
+    # Assume y has shape (n_features, n_samples)
+    features = eval_complex_poly(y, powers)
+    # This is needed for 3D matrix multiplication, where the batch dimension
+    # is expected to be first
+    # derivs = np.empty(y.shape[1], )
+
+
+@numba.njit(fastmath=True, cache=True)
+def objective_optimized(
+    x: np.ndarray,
+    trajs: np.ndarray,
+    offsets: np.ndarray,
+    z: np.ndarray,
+    complex_error: np.ndarray,
+    # real_error: np.ndarray,
+    linear_error: np.ndarray,
+    transform_poly_feats: np.ndarray,
+    transform_poly_feats_deriv: np.ndarray,
+    linear_dynamics: np.ndarray,
+    dynamics_structure: np.ndarray,
+    powers: list,
+):
+    """Numba-optimized objective function"""
+    # Reconstruct complex arrays from pre-split components
+    n_unknowns = x.size // 2
+    x_complex = x[:n_unknowns] + 1j * x[n_unknowns:]
+    # ipdb.set_trace()
+
+    # Unpack coefficient matrices
+    n_targets = linear_dynamics.shape[0]
+    n_dyn_feats = dynamics_structure.sum()
+    coeff_dyn = x_complex[: n_dyn_feats * n_targets].reshape(n_targets, n_dyn_feats)
+    coeff_trans = x_complex[n_dyn_feats * n_targets :].reshape(n_targets, -1)
+
+    # Process trajectories in parallel
+    # for i in prange(offsets.shape[0] - 1):
+    #     # Transformation: y + f(y)
+    #     trans = (
+    #         trajs[offsets[i] : offsets[i + 1]]
+    #         + coeff_trans @ transform_poly_feats[offsets[i] : offsets[i + 1], i]
+    #     )
+
+    #     z[:n_targets, offsets[i] : offsets[i + 1]] = trans
+    #     z[n_targets:, offsets[i] : offsets[i + 1]] = np.conj(trans)
+
+    #     # Compute N(y + f(y)) via custom polynomial evaluation
+    #     dynamics = eval_poly_numba(z, degree, dynamics_structure)
+
+    complex_error.fill(0)
+    temp = coeff_trans @ transform_poly_feats
+    trans = trajs + temp
+    z[:n_targets, :] = trans
+    z[n_targets, :] = np.conj(trans)
+    complex_error -= coeff_dyn @ eval_complex_poly(z, powers)
+    complex_error -= linear_dynamics @ temp
+    complex_error += linear_error
+    complex_error += coeff_trans @ transform_poly_feats_deriv
+    # Scipy can't handle it if the returned error is filled inplace, ie if
+    # real error is an argument to the function. The error seems to occur in
+    # the jacobian computation, so if we implement the analytic jacobian we may
+    # be able to avoid the copy at the end
+    real_error = np.empty(
+        (complex_error.shape[0], complex_error.shape[1] * 2), dtype=float
+    )
+    real_error[:, : trajs.shape[1]] = np.real(complex_error)
+    real_error[:, trajs.shape[1] :] = np.imag(complex_error)
+    # ipdb.set_trace()
+    # result = real_error.ravel()
+    # np.save("optim.npy", result)
+    # ipdb.set_trace()
+    return real_error.ravel()
+    # return result.copy()
+
+
+def create_normalform_transform_objective_optimized(
+    times,
+    trajectories,
+    Linearpart,
+    type="flow",
+    degree=3,
+    do_scaling=True,
+    tolerance=None,
+    use_center_manifold_style=False,
+):
+    # Original preparation
+    (
+        trajectories,
+        normalform,
+        linear_error,
+        poly_feats,
+        poly_feats_deriv,
+    ) = prepare_normalform_transform_optimization(
+        times,
+        trajectories,
+        Linearpart,
+        type,
+        degree,
+        do_scaling=do_scaling,
+        tolerance=tolerance,
+        use_center_manifold_style=use_center_manifold_style,
+    )
+
+    ndofs = Linearpart.shape[0] // 2
+    total_samples = sum([t.shape[1] for t in trajectories])
+    trajs = np.zeros((ndofs, total_samples), dtype=complex)
+    offsets = np.zeros(len(trajectories) + 1, dtype=int)
+    offsets[1:] = np.cumsum([t.shape[1] for t in trajectories])
+    for i, t in enumerate(trajectories):
+        trajs[:, offsets[i] : offsets[i + 1]] = t[:ndofs, :]
+    transform_poly_feats = np.concatenate(poly_feats, axis=1)
+    transform_poly_feats_deriv = np.concatenate(poly_feats_deriv, axis=1)
+    linear_error = np.concatenate(linear_error, axis=1)
+
+    # Preallocate memory
+    z = np.empty((ndofs * 2, total_samples), dtype=complex)
+    complex_error = np.zeros((ndofs, total_samples), dtype=complex)
+    # real_error = np.empty((ndofs, total_samples * 2), dtype=float)
+
+    n_unknowns_dynamics = np.sum(normalform.dynamics_structure)
+    n_unknowns_transformation = transform_poly_feats.shape[0]
+    powers = (
+        PolynomialFeatures(degree=degree, include_bias=False)
+        .fit(np.ones((1, ndofs * 2)))
+        .powers_
+    )
+    powers = powers[ndofs * 2 :, :]  # cut the linear part
+    powers = powers[normalform.dynamics_structure, :]
+
+    objective_dict = {
+        "trajs": trajs,
+        "offsets": offsets,
+        "z": z,
+        "complex_error": complex_error,
+        # "real_error": real_error,
+        "linear_error": linear_error,
+        "transform_poly_feats": transform_poly_feats,
+        "transform_poly_feats_deriv": transform_poly_feats_deriv,
+        "linear_dynamics": normalform.LinearPart[:ndofs, :ndofs],
+        "dynamics_structure": normalform.dynamics_structure,
+        "powers": powers,
+    }
+
+    # Create optimized objective
+    def objective(x):
+        # print(f"Input shape: {x.shape}, x: {x}")
+        result = objective_optimized(
+            x,
+            **objective_dict,
+        )
+        # print(f"Output norm: {np.linalg.norm(result)}")
+        return result
+
+    return (
+        normalform,
+        # objective_dict,
+        n_unknowns_dynamics,
+        n_unknowns_transformation,
+        objective,
+    )
+
+
 def create_normalform_transform_objective(
     times,
     trajectories,
@@ -387,6 +574,7 @@ def create_normalform_transform_objective(
     ]  # * ndofs  # need to create a matrix of shape (ndofs, transformation_normalform_polynomial_features[0])
 
     def objective(x):  # x is purely real
+        # print(f"Input shape: {x.shape}, x: {x}")
         # convert to complex form. First half is real, second half is imaginary
         n_unknowns = int(len(x) / 2)
         x_complex = x[:n_unknowns] + 1j * x[n_unknowns:]
@@ -437,11 +625,15 @@ def create_normalform_transform_objective(
             )
         ]
         # sum over all trajectories. Could normalize with the number of trajectories
-
         sum_error = np.hstack(
             [[np.real(e.ravel()), np.imag(e.ravel())] for e in error_along_trajs]
         )  # this is total error over all trajectories (complex)
-        return np.array(sum_error).ravel()
+        # ipdb.set_trace()
+        result = np.array(sum_error).ravel()
+        # print(f"Output norm: {np.linalg.norm(result)}")
+        # np.save("orig.npy", result)
+        # ipdb.set_trace()
+        return result
 
     return normalform, n_unknowns_dynamics, n_unknowns_transformation, objective
 
@@ -490,7 +682,7 @@ def wrap_optimized_coefficients(
     optimized_coefficients,
     find_inverse=False,
     trajectories=None,
-    **regression_kwargs
+    **regression_kwargs,
 ):
     """
     Wrap the optimized coefficients into a NonlinearCoordinateTransform object
