@@ -15,6 +15,7 @@ from typing import NamedTuple, Callable, Dict, Optional
 from numba import jit, float64, complex128, prange
 import numba
 import ipdb
+from findiff import Diff
 
 
 class NonlinearCoordinateTransform:
@@ -264,7 +265,7 @@ def prepare_normalform_transform_optimization(
     )  # only flow is implemented
     for i, y in enumerate(trajectories):
         # compute the error in the linear part
-        linear_error.append(dy_dt[i] - normalform.LinearPart.dot(y))
+        linear_error.append(-normalform.LinearPart.dot(y))
     # precomute nonlinear terms in the transformation map
     transformation_normalform_polynomial_features = []
     for y in trajectories:
@@ -357,7 +358,7 @@ def eval_poly_deriv(y, powers):
     # derivs = np.empty(y.shape[1], )
 
 
-@numba.njit(fastmath=True, cache=True)
+# @numba.njit(fastmath=True, cache=True)
 def objective_optimized(
     x: np.ndarray,
     trajs: np.ndarray,
@@ -370,7 +371,8 @@ def objective_optimized(
     transform_poly_feats_deriv: np.ndarray,
     linear_dynamics: np.ndarray,
     dynamics_structure: np.ndarray,
-    powers: list,
+    powers: np.ndarray,
+    fd: Diff,
 ):
     """Numba-optimized objective function"""
     # Reconstruct complex arrays from pre-split components
@@ -406,7 +408,10 @@ def objective_optimized(
     complex_error -= coeff_dyn @ eval_complex_poly(z, powers)
     complex_error -= linear_dynamics @ temp
     complex_error += linear_error
-    complex_error += coeff_trans @ transform_poly_feats_deriv
+
+    complex_error += fd(z[:n_targets, :])
+
+    # complex_error += coeff_trans @ transform_poly_feats_deriv
     # Scipy can't handle it if the returned error is filled inplace, ie if
     # real error is an argument to the function. The error seems to occur in
     # the jacobian computation, so if we implement the analytic jacobian we may
@@ -478,6 +483,9 @@ def create_normalform_transform_objective_optimized(
     powers = powers[ndofs * 2 :, :]  # cut the linear part
     powers = powers[normalform.dynamics_structure, :]
 
+    dt = times[0][1] - times[0][0]
+    fd = Diff(1, dt, acc=4)
+
     objective_dict = {
         "trajs": trajs,
         "offsets": offsets,
@@ -490,6 +498,7 @@ def create_normalform_transform_objective_optimized(
         "linear_dynamics": normalform.LinearPart[:ndofs, :ndofs],
         "dynamics_structure": normalform.dynamics_structure,
         "powers": powers,
+        "fd": fd,
     }
 
     # Create optimized objective
