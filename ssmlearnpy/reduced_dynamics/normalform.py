@@ -410,7 +410,7 @@ def objective_optimized(
     # Scipy can't handle it if the returned error is filled inplace, ie if
     # real error is an argument to the function. The error seems to occur in
     # the jacobian computation, so if we implement the analytic jacobian we may
-    # be able to avoid the copy at the end
+    # be able to avoid this memory allocation
     real_error = np.empty(
         (complex_error.shape[0], complex_error.shape[1] * 2), dtype=float
     )
