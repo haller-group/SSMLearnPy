@@ -8,7 +8,7 @@ from scipy.optimize import minimize
 from ssmlearnpy.utils.preprocessing import insert_complex_conjugate
 
 def disp(idx, symObj):
-    eqn = '\\[' + idx + ' ' + latex(symObj) + '\\]'
+    eqn = '$$' + idx + ' ' + latex(symObj) + '$$'
     display_latex(eqn,raw = True)
     return
 
@@ -17,7 +17,7 @@ def dispMore(idx, symObj):
     for i in range(len(idx)):
         dispArray = dispArray + idx[i] + ' ' + latex(symObj[i])
         
-    eqn = '\\[' + dispArray + '\\]'
+    eqn = '$$' + dispArray + '$$'
     display_latex(eqn,raw = True)
     return
 
