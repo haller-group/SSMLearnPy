@@ -461,11 +461,11 @@ class SSMLearn:
                     self.emb_data["observables"][i] for i in idx_trajectories
                 ]
 
-            if bool(self.geometry_predictions) is False:
-                self.predict_geometry(idx_trajectories)
+            # if bool(self.geometry_predictions) is False:
+            self.predict_geometry(idx_trajectories)
 
-            if bool(self.reduced_dynamics_predictions) is False:
-                self.predict_reduced_dynamics(idx_trajectories)
+            # if bool(self.reduced_dynamics_predictions) is False:
+            self.predict_reduced_dynamics(idx_trajectories)
 
             x_predict = decode_geometry(
                 self.decode, self.reduced_dynamics_predictions["reduced_coordinates"]

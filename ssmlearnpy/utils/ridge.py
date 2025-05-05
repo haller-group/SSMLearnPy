@@ -3,8 +3,10 @@ import logging
 
 import numpy as np
 from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import PolynomialFeatures, FunctionTransformer
+from sklearn.gaussian_process.kernels import Kernel
+
+from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.linear_model import Ridge
 from sklearn.linear_model import RidgeCV
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -38,6 +40,8 @@ def get_fit_ridge(
     alpha: list = 0,
     cv: int = 2,
     weight_fp: Optional[int] = None,
+    rbf_kernel: Kernel = None,
+    kernel_grid_size: int = 20,
 ):
     """Fit a ridge regression model to the data.
     Parameters:
@@ -51,6 +55,8 @@ def get_fit_ridge(
                  model.predict(LHS[i]) and RHS[i] should have the same shape
         do_scaling: bool, whether to apply a StandardScaler to the data before fitting
         poly_degree: int, degree of the polynomial to fit
+        rbf_kernel: sklearn kernel object, optional. If not None, the polynomial features will be combined with the kernel features
+        kernel_grid_size: int, number of points to use for the kernel grid per dimension
         fit_intercept: bool, whether to include the constant term in the regression
                         if False, this means that the model will be forced to pass through the origin.
                         Use this if you want to add an offset but don't know it apriori.
@@ -77,26 +83,58 @@ def get_fit_ridge(
         if isinstance(alpha, list):
             raise RuntimeError("Found alpha to be a list and cv to be <2.")
         regressor = Ridge(fit_intercept=fit_intercept, alpha=alpha)
-    if do_scaling:  # default is to include a standard scaler
-        mdl = Pipeline(
+
+    if rbf_kernel is not None:
+        logger.info(
+            f"Using kernel {str(rbf_kernel)} and polynomial features degree {poly_degree}"
+        )
+
+        # Create an equidistant grid of points close to the original features X
+        grid_range = 0.1 * (
+            X.max(axis=1) - X.min(axis=1)
+        )  # Define a range around the original features
+        grid_points = [
+            np.linspace(
+                X[i].min() - grid_range[i],
+                X[i].max() + grid_range[i],
+                num=kernel_grid_size,
+            )
+            for i in range(X.shape[0])
+        ]
+        grid = np.array(np.meshgrid(*grid_points)).reshape(X.shape[0], -1)
+
+        Y = grid.T  # Use the grid points as Y
+        feature_transf = FeatureUnion(
             [
                 (
                     "poly_transf",
                     PolynomialFeatures(degree=poly_degree, include_bias=False),
                 ),
+                ("kernel_transf", FunctionTransformer(rbf_kernel, kw_args={"Y": Y})),
+            ]
+        )  # Combine features from polynomial and rbf kernel
+    else:
+        logger.info(f"Using polynomial features degree {poly_degree}")
+        feature_transf = FeatureUnion(
+            [
+                (
+                    "poly_transf",
+                    PolynomialFeatures(degree=poly_degree, include_bias=False),
+                ),
+            ]
+        )
+
+    if do_scaling:  # default is to include a standard scaler
+        mdl = Pipeline(
+            [
+                ("feature_transf", feature_transf),
                 ("scaler", StandardScaler(with_mean=False)),
                 ("ridge_regressor", regressor),
             ]
         )
     else:
         mdl = Pipeline(
-            [
-                (
-                    "poly_transf",
-                    PolynomialFeatures(degree=poly_degree, include_bias=False),
-                ),
-                ("ridge_regressor", regressor),
-            ]
+            [("feature_transf", feature_transf), ("ridge_regressor", regressor)]
         )
     # explicitly set sample weights to 1 in case we have constraints
     sample_weight = np.ones(X.shape[1])
@@ -109,6 +147,7 @@ def get_fit_ridge(
             X, y, constraints, sample_weight, weight=1e10
         )
 
+    # TODO not sure if this still works
     if weight_fp is not None:
         # Get range of first dimension
         x_range = np.max(X[0]) - np.min(X[0])
@@ -130,7 +169,7 @@ def get_fit_ridge(
 
     map_coefs = mdl.named_steps.ridge_regressor.coef_ / scaler_coefs
     mdl.map_info["coefficients"] = map_coefs
-    mdl.map_info["exponents"] = mdl.named_steps.poly_transf.powers_
+    mdl.map_info["exponents"] = mdl.named_steps.feature_transf["poly_transf"].powers_
     return mdl
 
 
