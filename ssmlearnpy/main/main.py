@@ -328,7 +328,6 @@ class SSMLearn:
             # initial_guess = (
             #     np.ones((n_unknowns_dynamics + n_unknowns_transformation) * 2) * 0.1
             # )
-
             res = least_squares(
                 objective,
                 initial_guess,
@@ -356,6 +355,7 @@ class SSMLearn:
                 unpacked_coeffs,
                 find_inverse=True,
                 trajectories=self.emb_data["reduced_coordinates"],
+                raw_coeffs=res.x,
             )
             # self.normalform_reduced_dynamics = dynamics
             # self.normalform_reduced_dynamics.map_info["normalform_transformation"] = (

@@ -1,3 +1,4 @@
+import ipdb.stdout
 from sklearn.preprocessing import PolynomialFeatures
 from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
 import numpy as np
@@ -167,9 +168,10 @@ class NormalForm:
         else:
             LinearPart = self.LinearPart
         coeffs_for_exponents = self._nonlinear_coeffs(degree)
-        return np.repeat(
+        ret = np.repeat(
             np.diag(LinearPart).reshape(-1, 1), coeffs_for_exponents.shape[1], axis=1
         ) - np.matmul(np.diag(LinearPart), coeffs_for_exponents)
+        return ret
 
     def _resonance_condition(self, degree=3, use_center_manifold_style=False):
         """
@@ -195,14 +197,31 @@ class NormalForm:
         ndofs = int(size / 2)
         # assumes that the first half of the coordinates are the real part and the second half the imaginary part.
         # sparse structure for the nonlinearities
+
         N_structure = self._resonance_condition(
             degree, use_center_manifold_style=use_center_manifold_style
         )[:ndofs, :]
+
         # if there is a 1 in the structure matrix, we keep the corresponding column ~ logical or
-        self.dynamics_structure = np.sum(N_structure, axis=0).astype(dtype=bool)
-        self.transformation_structure = np.logical_not(
-            self.dynamics_structure
-        )  # complement
+        # self.dynamics_structure = np.sum(N_structure, axis=0).astype(dtype=bool)
+
+        # _structure is the full structure of the (d/2, poly_feats) matrix
+        # _reduced_structure is the same as _structure but with the columns that are all zero removed
+        #     it is used as a skeleton when unpacking the coefficient matrices in the objective
+        # _required_feats indicates the powers of the features thats we require
+        # (we require a feature if any value in the column is nonzero)
+        self.dynamics_structure = N_structure
+        self.transformation_structure = np.logical_not(self.dynamics_structure)
+        self.dynamics_reduced_structure = self.dynamics_structure[
+            :, ~np.all(self.dynamics_structure == 0, axis=0)
+        ]
+        self.transformation_reduced_structure = self.transformation_structure[
+            :, ~np.all(self.transformation_structure == 0, axis=0)
+        ]
+        self.dynamics_required_feats = np.sum(N_structure, axis=0).astype(dtype=bool)
+        self.transformation_required_feats = np.sum(
+            np.logical_not(N_structure), axis=0
+        ).astype(dtype=bool)
         return
 
 
@@ -273,7 +292,7 @@ def prepare_normalform_transform_optimization(
                 y.T,
                 degree=degree,
                 skip_linear=True,
-                structure=normalform.transformation_structure,
+                structure=normalform.transformation_required_feats,
             ).T
         )
     # compute the derivative of the nonlinear features
@@ -309,6 +328,7 @@ def create_normalform_initial_guess(
     initial_nonlinear_coeffs_in_modalcoords = initial_nonlinear_coeffs_in_modalcoords[
         :ndofs, :
     ]  #
+    # TODO see if this works for the corrected structures
     initial_guess_dynamics = initial_nonlinear_coeffs_in_modalcoords[:, size:][
         :, normalform.dynamics_structure
     ]
@@ -343,25 +363,37 @@ def eval_complex_poly(y, powers):
     return features
 
 
-def eval_poly_deriv(y, powers):
-    """
-    This function calculates the derivative of a polynomial
-    of y in C^2. It is assumed that y = [y,y_conjugate] and that
-    therefore d(poly(y))/dy_conjugate is identically zero. Therefore the
-    returned jacobian has dimension Nxfeaturesx1
-    """
-    # Assume y has shape (n_features, n_samples)
-    features = eval_complex_poly(y, powers)
-    # This is needed for 3D matrix multiplication, where the batch dimension
-    # is expected to be first
-    # derivs = np.empty(y.shape[1], )
+# def eval_poly_deriv(y, powers):
+#     """
+#     This function calculates the derivative of a polynomial
+#     of y in C^2. It is assumed that y = [y,y_conjugate] and that
+#     therefore d(poly(y))/dy_conjugate is identically zero. Therefore the
+#     returned jacobian has dimension Nxfeaturesx1
+#     """
+#     # Assume y has shape (n_features, n_samples)
+#     features = eval_complex_poly(y, powers)
+#     # This is needed for 3D matrix multiplication, where the batch dimension
+#     # is expected to be first
+#     # derivs = np.empty(y.shape[1], )
+
+
+@numba.njit(fastmath=True, cache=True)
+def unpack_coefficient_matrix(template, values):
+    result = np.zeros(template.shape, dtype=values.dtype)
+    value_idx = 0
+    for i in range(template.shape[0]):
+        for j in range(template.shape[1]):
+            if template[i, j]:
+                result[i, j] = values[value_idx]
+                value_idx += 1
+    return result
 
 
 @numba.njit(fastmath=True, cache=True)
 def objective_optimized(
     x: np.ndarray,
     trajs: np.ndarray,
-    offsets: np.ndarray,
+    # offsets: np.ndarray,
     z: np.ndarray,
     complex_error: np.ndarray,
     # real_error: np.ndarray,
@@ -370,43 +402,44 @@ def objective_optimized(
     transform_poly_feats_deriv: np.ndarray,
     linear_dynamics: np.ndarray,
     dynamics_structure: np.ndarray,
+    transformation_structure: np.ndarray,
     powers: list,
 ):
     """Numba-optimized objective function"""
     # Reconstruct complex arrays from pre-split components
     n_unknowns = x.size // 2
     x_complex = x[:n_unknowns] + 1j * x[n_unknowns:]
-    # ipdb.set_trace()
 
     # Unpack coefficient matrices
+    # n_targets = ssm_dim/2
     n_targets = linear_dynamics.shape[0]
+    # Dynamics_structure has shape (n_targets, n_features)
     n_dyn_feats = dynamics_structure.sum()
-    coeff_dyn = x_complex[: n_dyn_feats * n_targets].reshape(n_targets, n_dyn_feats)
-    coeff_trans = x_complex[n_dyn_feats * n_targets :].reshape(n_targets, -1)
 
-    # Process trajectories in parallel
-    # for i in prange(offsets.shape[0] - 1):
-    #     # Transformation: y + f(y)
-    #     trans = (
-    #         trajs[offsets[i] : offsets[i + 1]]
-    #         + coeff_trans @ transform_poly_feats[offsets[i] : offsets[i + 1], i]
-    #     )
-
-    #     z[:n_targets, offsets[i] : offsets[i + 1]] = trans
-    #     z[n_targets:, offsets[i] : offsets[i + 1]] = np.conj(trans)
-
-    #     # Compute N(y + f(y)) via custom polynomial evaluation
-    #     dynamics = eval_poly_numba(z, degree, dynamics_structure)
+    # Need smarter reshaping
+    # dynamics_matrix = x_complex[: n_dyn_feats * n_targets].reshape(
+    #     n_targets, n_dyn_feats
+    # )
+    # transformation_matrix = x_complex[n_dyn_feats * n_targets :].reshape(n_targets, -1)
+    dynamics_matrix = unpack_coefficient_matrix(
+        dynamics_structure, x_complex[:n_dyn_feats]
+    )
+    transformation_matrix = unpack_coefficient_matrix(
+        transformation_structure, x_complex[n_dyn_feats:]
+    )
 
     complex_error.fill(0)
-    temp = coeff_trans @ transform_poly_feats
-    trans = trajs + temp
-    z[:n_targets, :] = trans
-    z[n_targets, :] = np.conj(trans)
-    complex_error -= coeff_dyn @ eval_complex_poly(z, powers)
-    complex_error -= linear_dynamics @ temp
+    # N(Y_tilde) ie polynomial transformation of diagonalized reduced coordinates
+    poly_y = transformation_matrix @ transform_poly_feats
+    # z without conjugates
+    z_reduced = trajs + poly_y
+    z[:n_targets, :] = z_reduced
+    z[n_targets:, :] = np.conj(z_reduced)
+    # R(z) ie polynomial transformation of z
+    complex_error -= dynamics_matrix @ eval_complex_poly(z, powers)
+    complex_error -= linear_dynamics @ poly_y
     complex_error += linear_error
-    complex_error += coeff_trans @ transform_poly_feats_deriv
+    complex_error += transformation_matrix @ transform_poly_feats_deriv
     # Scipy can't handle it if the returned error is filled inplace, ie if
     # real error is an argument to the function. The error seems to occur in
     # the jacobian computation, so if we implement the analytic jacobian we may
@@ -469,26 +502,27 @@ def create_normalform_transform_objective_optimized(
     # real_error = np.empty((ndofs, total_samples * 2), dtype=float)
 
     n_unknowns_dynamics = np.sum(normalform.dynamics_structure)
-    n_unknowns_transformation = transform_poly_feats.shape[0]
+    n_unknowns_transformation = np.sum(normalform.transformation_structure)
     powers = (
         PolynomialFeatures(degree=degree, include_bias=False)
         .fit(np.ones((1, ndofs * 2)))
         .powers_
     )
     powers = powers[ndofs * 2 :, :]  # cut the linear part
-    powers = powers[normalform.dynamics_structure, :]
+    powers = powers[normalform.dynamics_required_feats, :]
 
     objective_dict = {
         "trajs": trajs,
-        "offsets": offsets,
+        # "offsets": offsets,
         "z": z,
         "complex_error": complex_error,
         # "real_error": real_error,
         "linear_error": linear_error,
         "transform_poly_feats": transform_poly_feats,
         "transform_poly_feats_deriv": transform_poly_feats_deriv,
-        "linear_dynamics": normalform.LinearPart[:ndofs, :ndofs],
-        "dynamics_structure": normalform.dynamics_structure,
+        "linear_dynamics": np.ascontiguousarray(normalform.LinearPart[:ndofs, :ndofs]),
+        "dynamics_structure": normalform.dynamics_reduced_structure,
+        "transformation_structure": normalform.transformation_reduced_structure,
         "powers": powers,
     }
 
@@ -654,19 +688,28 @@ def unpack_optimized_coeffs(
     """
     n_unknowns = int(len(optimal_x) / 2)
     x_complex = optimal_x[:n_unknowns] + 1j * optimal_x[n_unknowns:]
-    # separate these into matrices of coefficients:
-    coeff_dynamics = (
-        x_complex[:n_unknowns_dynamics].reshape(ndofs, int(n_unknowns_dynamics / ndofs))
-        # .reshape((ndofs, int(n_unknowns_dynamics / ndofs)))
-    )
-    coeff_transformation = x_complex[
-        n_unknowns_dynamics : n_unknowns_dynamics + n_unknowns_transformation
-    ].reshape((ndofs, int(n_unknowns_transformation / ndofs)))
+    # # separate these into matrices of coefficients:
+    # coeff_dynamics = (
+    #     x_complex[:n_unknowns_dynamics].reshape(ndofs, int(n_unknowns_dynamics / ndofs))
+    #     # .reshape((ndofs, int(n_unknowns_dynamics / ndofs)))
+    # )
+    # coeff_transformation = x_complex[
+    #     n_unknowns_dynamics : n_unknowns_dynamics + n_unknowns_transformation
+    # ].reshape((ndofs, int(n_unknowns_transformation / ndofs)))
 
-    # insert the zeros into the coefficient matrices, which is dictated by normalform.dynamics_structure and normalform.transformation_structure
-    coeff_dynamics = insert_zeros(coeff_dynamics, normalform.dynamics_structure)
-    coeff_transformation = insert_zeros(
-        coeff_transformation, normalform.transformation_structure
+    # # insert the zeros into the coefficient matrices, which is dictated by normalform.dynamics_structure and normalform.transformation_structure
+    # coeff_dynamics = insert_zeros(coeff_dynamics, normalform.dynamics_structure)
+    # coeff_transformation = insert_zeros(
+    #     coeff_transformation, normalform.transformation_structure
+    # )
+    n_dyn_feats = normalform.dynamics_structure.sum()
+    coeff_dynamics = unpack_coefficient_matrix(
+        normalform.dynamics_structure,
+        x_complex[:n_dyn_feats],
+    )
+    coeff_transformation = unpack_coefficient_matrix(
+        normalform.transformation_structure,
+        x_complex[n_dyn_feats:],
     )
 
     return {
@@ -682,6 +725,7 @@ def wrap_optimized_coefficients(
     optimized_coefficients,
     find_inverse=False,
     trajectories=None,
+    raw_coeffs=None,
     **regression_kwargs,
 ):
     """
@@ -722,12 +766,39 @@ def wrap_optimized_coefficients(
 
     dynamics.map_info["coefficients"] = coeff_dynamics
     dynamics.map_info["exponents"] = generate_exponents(2 * ndofs, degree)
+    nonlinear_transform = compute_polynomial_map(coeff_dynamics, degree)
+
+    # Matrix acting linearly on z
+    linear_dynamics_matrix = normalform.LinearPart[:ndofs, :ndofs]
+    # Matrix acting on the polynomial features of z
+    nl_dynamics_matrix = unpack_coefficient_matrix(
+        normalform.dynamics_reduced_structure,
+        raw_coeffs[: normalform.dynamics_structure.sum()],
+    )
+    # Polynomial features corresponding to nonzero rows in the dynamics matrix
+    required_powers = (
+        PolynomialFeatures(degree=degree, include_bias=False)
+        .fit(np.ones((1, ndofs * 2)))
+        .powers_
+    )[ndofs * 2 :, :][normalform.dynamics_required_feats, :]
 
     def vectorfield(t, x):
-        xeval = x.reshape(-1, 1)
-        evaluation = compute_polynomial_map(coeff_dynamics, degree)(xeval).T
-        # need to reshape this for the complex_polynomial_features function
-        return insert_complex_conjugate(evaluation)[:, 0]
+
+        # Old implementation
+        # xeval = x.reshape(-1, 1)
+        # evaluation = compute_polynomial_map(coeff_dynamics, degree)(xeval).T
+        # ret = insert_complex_conjugate(evaluation)[:, 0]
+
+        z = x.reshape(-1, 1)
+        z_reduced = z[:ndofs, :]
+        z_dot_reduced = (
+            linear_dynamics_matrix @ z_reduced
+            + nl_dynamics_matrix @ eval_complex_poly(z, required_powers)
+        )
+        z_dot = np.empty((2 * ndofs, 1), dtype=complex)
+        z_dot[:ndofs, :] = z_dot_reduced
+        z_dot[ndofs:, :] = np.conj(z_dot_reduced)
+        return z_dot.squeeze()
 
     dynamics.map_info["vectorfield"] = vectorfield
     transformation = NonlinearCoordinateTransform(
@@ -776,7 +847,9 @@ def rescale_linear_part(diagonalizing_matrix, trajectories):
     modal_trajectories = np.matmul(diagonalizing_matrix, trajectories_matrix)
     max_modal_amplitude = np.max(np.abs(modal_trajectories), axis=1)
 
-    rescalematrix = np.linalg.inv(2 * max_modal_amplitude * np.eye(2))
+    rescalematrix = np.linalg.inv(
+        2 * max_modal_amplitude * np.eye(max_modal_amplitude.shape[0])
+    )
     return rescalematrix  # np.matmul(rescalematrix, diagonalizing_matrix)
 
 
