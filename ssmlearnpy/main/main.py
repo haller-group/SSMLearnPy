@@ -19,6 +19,7 @@ from ssmlearnpy.utils.ridge import (
 from ssmlearnpy.utils.ridge import get_matrix
 from ssmlearnpy.utils.file_handler import get_vectors
 from ssmlearnpy.utils.plots import compute_surface
+from ssmlearnpy.utils.data import SSMData, SSMDataAttribute
 import ssmlearnpy.reduced_dynamics.normalform as normalform
 from scipy.optimize import minimize, least_squares
 from copy import deepcopy
@@ -77,8 +78,8 @@ class SSMLearn:
     def __init__(
         self,
         path_to_trajectories: str = None,
-        t: list = None,
-        x: list = None,
+        # t: list = None,
+        # x: list = None,
         offset: np.ndarray = None,
         params: list = None,
         reduced_coordinates: list = None,
@@ -88,29 +89,30 @@ class SSMLearn:
         dynamics_type="flow",
         dynamics_structure: str = Literal["generic", "normalform"],
         error_metric="NTE",
+        data: SSMData = None,
     ) -> None:
-        self.input_data = {}
+        # self.input_data = {}
 
-        if path_to_trajectories:
-            self.input_data["time"], self.input_data["observables"] = self.import_data(
-                path_to_trajectories
-            )
+        self.data = data if data is not None else SSMData()
 
-        elif t and x:
-            self.input_data["time"] = t
-            self.input_data["observables"] = x
-            self.input_data["offset"] = offset
+        assert (
+            self.data.input_signal is not None or path_to_trajectories is not None
+        ), "Please pass input data via the SSMData class or a path to the data file."
 
-        else:
-            raise RuntimeError(
-                (
-                    f"Not enought parameters specified. Found: path_to_trajectories={path_to_trajectories}"
-                    + f"t={t}, x={x}. Please either set the path to the trajectories file or pass them to the class"
+        assert (
+            self.data.input_signal is not None != path_to_trajectories is not None
+        ), "Found non-empty input data and a path to the data file. Please pass only one of them."
+
+        if not self.data.input_signal:
+            if path_to_trajectories is None:
+                self.data.time, self.data.input_signal = self.import_data(
+                    path_to_trajectories
                 )
-            )
-
         self.check_inputs()
-        self.emb_data = {}
+        # self.emb_data = {}
+
+        if self.data.embedded_signal is None:
+            pass
 
         if derive_embdedding and not reduced_coordinates:
             logger.info("Getting coordinates embeddings")
