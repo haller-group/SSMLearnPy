@@ -528,7 +528,7 @@ def fit_inverse(
             for j in range(2 * ndofs):
                 constraint_lhs[j, j] = 1.0
             for i in range(ndofs):
-                constraint_rhs[i * ndofs] = 1.0
+                constraint_rhs[i, i] = 1.0
             matrix_middle = np.conjugate(constraint_lhs).T @ np.linalg.inv(
                 constraint_lhs @ XXinv @ np.conjugate(constraint_lhs).T
             )

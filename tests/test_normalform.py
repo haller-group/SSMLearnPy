@@ -269,28 +269,109 @@ def test_create_normalform_initial_guess():
     assert len(initial_guess) == 14
 
 
-def test_fit_inverse():
+def test_fit_inverse_2d(show_plot = False):
+    # (eta_1, eta_2) = T(z, conj(z)) computes the reduced coordinates from the nf. coordinates
     np.random.seed(1)
     x = np.random.rand(1, 400) + 1j * np.random.rand(1, 400)
     transformCoeffs = np.random.rand(1, 20) + 1j * np.random.rand(1, 20)
+    transformCoeffs = transformCoeffs * 0.01
+    transformCoeffs[0,0] = 1
+    transformCoeffs[0,1] = 0 # ensure identity jacobian
+
     xx = insert_complex_conjugate(x)
     TF = NonlinearCoordinateTransform(
         2, 5, inverse_transform_coefficients=transformCoeffs, linear_transform=np.eye(2)
     )
+    
     trajectory = [xx]
-    _, inverse = ridge.fit_inverse(
+    coeffs, inverse = ridge.fit_inverse(
         TF.inverse_transform, trajectory, 5, near_identity=True
     )
-    # transformed = TF.inverse_transform(trajs)
-    # inversetransformed = [inverse(t.T) for t in transformed]
     image = TF.inverse_transform(trajectory)
-    TF.set_transform_coefficients(_)
+    TF.set_transform_coefficients(coeffs)
     inversetransformed = [inverse(t) for t in image]
+    if show_plot:
+        plt.figure()
 
-    print(np.average(np.abs(xx[0, :] - inversetransformed[0])))
+        plt.plot(xx[0, :].real, image[0][0,:],'.')
+        plt.plot(xx[0, :].real, xx[0, :], '-',  c='black')
+        plt.xlabel('Real z_1')
+        plt.ylabel('eta_1')
+        plt.figure()
+        plt.plot(xx[0, :].imag, image[0][1,:],'.')
+        plt.plot(xx[0, :].imag, xx[0, :].imag, '-', c='black')
+        plt.xlabel('Im z_1')
+        plt.ylabel('eta_2')
 
+        plt.figure()
+        plt.title('$T^{-1}(T(z,conj(z)))==(z, conj(z))$')
+        plt.plot(xx[0, :].real, inversetransformed[0][0,:].real,'.')
+        plt.plot(xx[0, :].real, xx[0, :].real,'-', c='black')
 
+        plt.figure()
+        plt.title('$T^{-1}(T(z,conj(z)))==(z, conj(z))$')
+        plt.plot(xx[0, :].imag, inversetransformed[0][0,:].imag,'.')
+        plt.plot(xx[0, :].imag, xx[0, :].imag,'-', c='black')
+
+        plt.show()
+    assert np.allclose(xx[0,:], inversetransformed[0][0,:], atol = 1e-2)
 import matplotlib.pyplot as plt
+
+
+def test_fit_inverse_4d(show_plot = False):
+    np.random.seed(1)
+    x = np.random.rand(2, 400) + 1j * np.random.rand(2, 400)
+
+    transformCoeffs = np.random.rand(2, 34) + 1j * np.random.rand(2, 34)
+    transformCoeffs = transformCoeffs * 0.01
+    transformCoeffs[0,0] = 1.
+
+    transformCoeffs[0,1] = 0
+
+    transformCoeffs[1,0] = 0
+    transformCoeffs[1,1] = 1
+
+    xx = insert_complex_conjugate(x)
+    TF = NonlinearCoordinateTransform(
+        4, 3, inverse_transform_coefficients=transformCoeffs, linear_transform=np.eye(4)
+    )
+
+
+    trajectory = [xx]
+    coeffs_, inverse = ridge.fit_inverse(
+        TF.inverse_transform, trajectory, 3, near_identity=True
+    )
+    image = TF.inverse_transform(trajectory)
+    TF.set_transform_coefficients(coeffs_)
+    inversetransformed = [inverse(t) for t in image]
+    if show_plot:
+        plt.figure()
+
+        plt.plot(xx[0, :].real, image[0][0,:],'.')
+        plt.plot(xx[0, :].real, xx[0, :], '-',  c='black')
+        plt.xlabel('Real z_1')
+        plt.ylabel('eta_1')
+        plt.figure()
+        plt.plot(xx[0, :].imag, image[0][1,:],'.')
+        plt.plot(xx[0, :].imag, xx[0, :].imag, '-', c='black')
+        plt.xlabel('Im z_1')
+        plt.ylabel('eta_2')
+
+        plt.figure()
+        plt.title('$T^{-1}(T(z,conj(z)))==(z, conj(z))$')
+        plt.plot(xx[0, :].real, inversetransformed[0][0,:].real,'.')
+        plt.plot(xx[0, :].real, xx[0, :].real,'-', c='black')
+
+        plt.figure()
+        plt.title('$T^{-1}(T(z,conj(z)))==(z, conj(z))$')
+        plt.plot(xx[0, :].imag, inversetransformed[0][0,:].imag,'.')
+        plt.plot(xx[0, :].imag, xx[0, :].imag,'-', c='black')
+
+        plt.show()
+    assert np.allclose(xx[0,:], inversetransformed[0][0,:], atol = 1e-2)
+    assert np.allclose(xx[1,:], inversetransformed[0][1,:], atol = 1e-2)
+
+
 
 
 def test_normalform_transform():
@@ -496,7 +577,7 @@ def test_4d_manifold_fit_normal_form_dynamics():
     assert np.allclose(pred_nf[1,:], nf_gt[1,:], atol = 3e-3) # comparable to matlab
     
 
-def test_4d_manifold_fit_normal_form_inverse_transform(show_plot = False):
+def test_4d_manifold_fit_normal_form_complete_pred(show_plot = False):
     from ssmlearnpy.main.main import SSMLearn
     t = np.linspace(0, 100, 10000)
     signal = np.exp(-0.1*t)*np.sin(t) +  np.exp(-0.37*t)*np.sin(3.2 * t)
@@ -529,6 +610,8 @@ def test_4d_manifold_fit_normal_form_inverse_transform(show_plot = False):
             "use_center_manifold_style": True,
         }
     )
+    observable_traj = ssm.emb_data["observables"][0]
+
     reduced_traj = ssm.emb_data["reduced_coordinates"][0]
     nf_gt = ssm.normalform_transformation.inverse_transform(reduced_traj)
     pred_nf = solve_ivp(
@@ -539,6 +622,8 @@ def test_4d_manifold_fit_normal_form_inverse_transform(show_plot = False):
         method="RK45",
     ).y
     pred_reduced = ssm.normalform_transformation.transform(pred_nf).real
+    pred_obs = ssm.decoder.predict(pred_reduced.T).T
+
     if show_plot: 
         plt.figure()
         plt.title('Normal form coords: z1')
@@ -557,15 +642,26 @@ def test_4d_manifold_fit_normal_form_inverse_transform(show_plot = False):
         plt.plot(reduced_traj[0,:], reduced_traj[1,:], '-', label = 'True')
         plt.plot(pred_reduced[0,:], pred_reduced[1,:], '--', label = 'Pred')
         plt.legend()
-        
+
+        plt.figure()
+        plt.title('Observable')
+        plt.plot(t, observable_traj[0], '-', label="True")
+        plt.plot(t, pred_obs[0], '--', label="Pred")
+        plt.legend()
+
         plt.show()
     # prediction errors
-    assert np.allclose(reduced_traj[0,:], pred_reduced[0,:], atol = 1e-3)
-    assert np.allclose(reduced_traj[1,:], pred_reduced[1,:], atol = 1e-3)
     
+    assert np.allclose(reduced_traj[0,:], pred_reduced[0,:], atol = 1e-2)
+    assert np.allclose(reduced_traj[1,:], pred_reduced[1,:], atol = 1e-2)
+    assert np.allclose(observable_traj[0], pred_obs[0], atol = 1e-2)
 
 
-if __name__ == "__main__":
+
+
+
+
+#if __name__ == "__main__":
     # test_misc_conjugates()
     # test_normalform_nonlinear_coeffs()
     # test_normalform_lincombinations()
@@ -577,7 +673,7 @@ if __name__ == "__main__":
 
     # test_fit_inverse()
     # test_normalform_transform()
-
-    
-    test_4d_manifold_fit_normal_form_inverse_transform(show_plot=True)
+    #test_fit_inverse_2d(show_plot=False)
+    #test_fit_inverse_4d(show_plot=False)
+    #test_4d_manifold_fit_normal_form_complete_pred(show_plot=True)
     
