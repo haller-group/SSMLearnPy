@@ -6,3 +6,5 @@ pandas
 plotly
 jupyter
 findiff
+ipdb
+numba
