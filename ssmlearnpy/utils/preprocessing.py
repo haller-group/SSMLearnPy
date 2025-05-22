@@ -119,7 +119,11 @@ def compute_polynomial_map(
 
 
 def insert_complex_conjugate(x):
-    return np.concatenate((x, np.conj(x)), axis=0)
+    ndofs = x.shape[0]
+    x_with_conj = np.empty((2 * ndofs, x.shape[1]), dtype = x.dtype)
+    x_with_conj[:ndofs, :] = x
+    x_with_conj[ndofs:, :] = np.conj(x)
+    return x_with_conj
 
 
 def unpack_coefficient_matrices_from_vector(z, n_coefs_1, n_features, n_targets):
@@ -142,3 +146,37 @@ def unpack_coefficient_matrices_from_vector(z, n_coefs_1, n_features, n_targets)
     n_features_2 = int(n_coefs_2 / n_targets)
     matrix_2 = z[n_coefs_1:].reshape(n_targets, n_features_2)
     return matrix_1, matrix_2
+
+
+def sort_complex_eigenpairs(d_unsorted, v_unsorted):
+    # Sort the eigenvalues in descending order of real parts
+    # Arrange them such that unique eigenvalues follow each other
+    # add the complex conjugates at the end
+    sorted_indices = np.argsort(-np.real(d_unsorted))
+    d = d_unsorted[sorted_indices]
+    v = v_unsorted[:, sorted_indices]
+    first_half_indices = []
+    second_half_indices = []
+    used = set()
+    for i in range(len(d)):
+        val = d[i]
+        if i in used or d[i].imag < 0: # convention: positive frequency comes first
+            continue
+        first_half_indices.append(i)
+        used.add(i)
+        # find its conjugate. Loop starts from the start, because we might have skipped lambda with <0 freq. 
+        conj_val = np.conj(val)
+        for j in range(len(d)):
+            if j not in used and np.isclose(d[j], conj_val, atol=1e-10):
+                used.add(j)
+                second_half_indices.append(j)
+                break
+    second_half_vals = []
+    for i in first_half_indices:
+        val = d[i]
+        second_half_vals.append(np.conj(val))
+    d_sorted = np.concatenate([d[first_half_indices], np.array(second_half_vals)])
+    v_sorted = np.hstack((v[:, first_half_indices], v[:,second_half_indices]))
+    return d_sorted, v_sorted
+
+    
