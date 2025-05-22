@@ -9,7 +9,7 @@ from ssmlearnpy.utils.preprocessing import (
     generate_exponents,
     compute_polynomial_map,
     insert_complex_conjugate,
-    unpack_coefficient_matrices_from_vector,
+    unpack_coefficient_matrices_from_vector, sort_complex_eigenpairs
 )
 from ssmlearnpy.utils import ridge
 from typing import NamedTuple, Callable, Dict, Optional
@@ -168,9 +168,11 @@ class NormalForm:
         else:
             LinearPart = self.LinearPart
         coeffs_for_exponents = self._nonlinear_coeffs(degree)
+        ## 
+        n_exponents = coeffs_for_exponents.shape[1]
         ret = np.repeat(
             np.diag(LinearPart).reshape(-1, 1), coeffs_for_exponents.shape[1], axis=1
-        ) - np.matmul(np.diag(LinearPart), coeffs_for_exponents)
+        ) - np.repeat(np.matmul(np.diag(LinearPart), coeffs_for_exponents).reshape(1,-1), LinearPart.shape[0], axis = 0)
         return ret
 
     def _resonance_condition(self, degree=3, use_center_manifold_style=False):
@@ -180,7 +182,10 @@ class NormalForm:
         lincombs = self._eigenvalue_lin_combinations(
             degree, use_center_manifold_style=use_center_manifold_style
         )
-        return np.abs(lincombs) < self.tolerance  # return a boolean array
+        conditions = np.abs(lincombs) < self.tolerance # return a boolean array
+        if use_center_manifold_style: 
+            conditions = np.abs(lincombs) < 1e-10 # tolerance could also be 0 on a center manifold. 
+        return conditions 
 
     def scale_diagonalizing_matrix(self, scaling_matrix):
         self.diagonalizing_matrix = np.matmul(scaling_matrix, self.diagonalizing_matrix)
@@ -328,15 +333,17 @@ def create_normalform_initial_guess(
     initial_nonlinear_coeffs_in_modalcoords = initial_nonlinear_coeffs_in_modalcoords[
         :ndofs, :
     ]  #
+    print(initial_nonlinear_coeffs_in_modalcoords[:, size:].shape)
+    initial_nonlinear_coeffs_in_modalcoords_truncated = initial_nonlinear_coeffs_in_modalcoords[:, size:]
     # TODO see if this works for the corrected structures
-    initial_guess_dynamics = initial_nonlinear_coeffs_in_modalcoords[:, size:][
-        :, normalform.dynamics_structure
+    initial_guess_dynamics = initial_nonlinear_coeffs_in_modalcoords_truncated[
+        normalform.dynamics_structure
     ]
     # Set the initial guess for the normal form transformation coeffs as -1* the modal dynamics coeffs.
     initial_guess_transformation = (
         -1
-        * initial_nonlinear_coeffs_in_modalcoords[:, size:][
-            :, normalform.transformation_structure
+        * initial_nonlinear_coeffs_in_modalcoords_truncated[
+            normalform.transformation_structure
         ]
     )
     iniitial_guess_joint_complex = np.concatenate(
@@ -795,9 +802,10 @@ def wrap_optimized_coefficients(
             linear_dynamics_matrix @ z_reduced
             + nl_dynamics_matrix @ eval_complex_poly(z, required_powers)
         )
-        z_dot = np.empty((2 * ndofs, 1), dtype=complex)
-        z_dot[:ndofs, :] = z_dot_reduced
-        z_dot[ndofs:, :] = np.conj(z_dot_reduced)
+        # z_dot = np.empty((2 * ndofs, 1), dtype=complex)
+        # z_dot[::2, :] = z_dot_reduced
+        # z_dot[1::2, :] = np.conj(z_dot_reduced)
+        z_dot = insert_complex_conjugate(z_dot_reduced)
         return z_dot.squeeze()
 
     dynamics.map_info["vectorfield"] = vectorfield
@@ -831,9 +839,7 @@ def diagonalize_linear_part(LinearPart):
     # do a linear transformation such that the lin. part
     # is diagonal and the eigenvalues are sorted according to their real parts
     eigenvalues, eigenvectors = np.linalg.eig(LinearPart)
-    index = eigenvalues.argsort()[::-1]  # largest eigenvalues first
-    eigenvalues = eigenvalues[index]
-    eigenvectors = eigenvectors[:, index]
+    eigenvalues, eigenvectors = sort_complex_eigenpairs(eigenvalues, eigenvectors)
     # np.linalg.inv(eigen) @ np.diag(eigenvalues) @ np.linalg.inv(eigenvectors) = i
     # only true if it was sorted correctly too
     is_diagonal = np.allclose(np.diag(eigenvalues), LinearPart)

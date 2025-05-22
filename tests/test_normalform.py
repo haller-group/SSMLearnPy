@@ -19,7 +19,7 @@ from ssmlearnpy.utils.preprocessing import (
 from ssmlearnpy.reduced_dynamics.normalform import (
     NonlinearCoordinateTransform,
     NormalForm,
-    create_normalform_transform_objective,
+    create_normalform_transform_objective_optimized,
     prepare_normalform_transform_optimization,
     unpack_optimized_coeffs,
 )
@@ -41,14 +41,17 @@ def vectorfield(t, x, r=1):
 
 # test normal form transforms:
 def test_normalform_nonlinear_coeffs():
-    linearpart = np.ones((2, 2))
-    nf = NormalForm(linearpart)
+    A = np.array(
+        [[-0.6, -1],
+         [1,  -0.6]]
+    )
+    nf = NormalForm(A)
     nonlinear_coeffs = nf._nonlinear_coeffs(degree=3)
     truecoeffs = np.array([[2, 1, 0, 3, 2, 1, 0], [0, 1, 2, 0, 1, 2, 3]])
     assert np.all(nonlinear_coeffs == truecoeffs)
 
 
-def test_normalform_lincombinations():
+def test_normalform_lincombinations_2d():
     # use the linear part of the above vectorfield at -1, 0:
     linearpart = np.array(
         [[-0.05 + 1j * 1.41332940251026, 0], [0, -0.05 - 1j * 1.41332940251026]]
@@ -81,8 +84,30 @@ def test_normalform_lincombinations():
     )
     assert np.allclose(lincombs, true_lincombs)
 
+def test_normalform_lincombinations_4d():
+    # get the true values from matlab
+    # lambda_1 = -0.1 + 1j 
+    # lambda_2 = -0.33 + 6.8802j
+    # MM = repmat(d_nf,1,size(Expmat_n,1))-repmat(transpose(Expmat_n*d_nf),k,1);
+    import os
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    test_file_path = os.path.join(script_dir, 'test_lincombs.mat')
 
-def test_normalform_resonance():
+    lincombs_matlab_data = loadmat(test_file_path)
+    lincombs_matlab_matrix = lincombs_matlab_data['MM']
+    exponents_matlab = lincombs_matlab_data['Expmat_n']
+    linearpart = np.diag(
+        lincombs_matlab_data['d_nf'][:,0]
+    )
+
+    nf = NormalForm(linearpart)
+    lincombs = nf._eigenvalue_lin_combinations(degree=3)
+    assert np.allclose(nf._nonlinear_coeffs(degree = 3), exponents_matlab.T) # exponents match 
+    assert np.allclose(lincombs, lincombs_matlab_matrix) # lin.combinations match
+
+
+
+def test_normalform_resonance_2d():
     # use the linear part of the above vectorfield at -1, 0:
     linearpart = np.array(
         [[-0.05 - 1j * 1.41332940251026, 0], [0, -0.05 + 1j * 1.41332940251026]]
@@ -93,18 +118,44 @@ def test_normalform_resonance():
     assert np.allclose(whereistrue, [[0, 1], [4, 5]])
 
 
+
+
+def test_normalform_resonance_4d():
+    # lambda_1 = -0.1 + 1j 
+    # lambda_2 = -0.33 + 6.8802j
+    A = np.diag(
+    [-0.1 +1.j,      -0.33+6.8802j,  -0.1 -1.j,      -0.33-6.8802j]
+    )
+    nf = NormalForm(A)
+    resonances = nf._resonance_condition(degree=3, use_center_manifold_style=True)
+    lincombs = nf._eigenvalue_lin_combinations(degree=3, use_center_manifold_style=True)
+    exponents = nf._nonlinear_coeffs(degree = 3)
+    assert np.sum(resonances) == 8 
+    # lambda_1 resonance: 
+    # lambda_1 + conj(lambda_1) + lambda_1
+    # lambda_2 + conj(lambda_2) + lambda_1
+    assert np.allclose(exponents[:, resonances[0,:]].T, [[2, 0, 1, 0], [1, 1, 0, 1]])
+    # conj(lambda_1) resonance:
+    # lambda_1 + conj(lambda_1) + conj(lambda_1)
+    # lambda_2 + conj(lambda_2) + conj(lambda_1)
+    assert np.allclose(exponents[:, resonances[2,:]].T, [[1, 0, 2, 0], [0, 1, 1, 1]])
+    # lambda_2 resonance: 
+    # lambda_2 + conj(lambda_2) + lambda_2
+    # lambda_1 + conj(lambda_1) + lambda_2
+    assert np.allclose(exponents[:, resonances[1,:]].T, [[1, 1, 1, 0], [0, 2, 0, 1]])
+    # conj(lambda_2) resonance: 
+    # lambda_2 + conj(lambda_2) + conj(lambda_2)
+    # lambda_1 + conj(lambda_1) + conj(lambda_2)
+    assert np.allclose(exponents[:, resonances[3,:]].T, [[1, 0, 1, 1], [0, 1, 0, 2]])
+    
 def test_nonlinear_change_of_coords():
     xx = np.linspace(-1, 1, 10)
     yy = np.linspace(-0.5, 0.5, 10)
     transformedx = xx + yy + xx**2 + yy**2
     vect = np.array([xx, yy])
-    print(vect.shape)
-
-    # print(vect.shape)
     transformedy = xx - yy + xx**3 - yy * xx
     poly_features = PolynomialFeatures(degree=3, include_bias=False).fit(vect.T)
     vect_transform = poly_features.transform(vect.T)
-    # print(vect_transform.shape)
     exponents = poly_features.powers_.T
     # print(exponents)
     # (2, 10)
@@ -120,8 +171,7 @@ def test_nonlinear_change_of_coords():
         transform_coefficients=transformationCoeffs,
         inverse_transform_coefficients=transformationCoeffs,
     )
-    print(transformationCoeffs.shape)
-    z = TF.inverse_transform(vect)
+    z = TF.inverse_transform(vect).T
     assert np.allclose(z[0, :], transformedx)
     assert np.allclose(z[1, :], transformedy)
 
@@ -151,7 +201,7 @@ def test_set_dynamics_and_transformation_structure():
     nf = NormalForm(linearPart)
     nf.set_dynamics_and_transformation_structure("flow", 3)
     truestructure = [False, False, False, False, True, False, False]
-    for s, t in zip(nf.dynamics_structure, truestructure):
+    for s, t in zip(nf.dynamics_structure[0,:], truestructure):
         assert s == t
 
 
@@ -268,7 +318,7 @@ def test_normalform_transform():
     linearPart = mdl.map_info["coefficients"][:, :2]
 
     nf, n_unknowns_dynamics, n_unknowns_transformation, objectiv = (
-        create_normalform_transform_objective(times, trajectories, linearPart, degree=5)
+        create_normalform_transform_objective_optimized(times, trajectories, linearPart, degree=5)
     )
     initial_guess = create_normalform_initial_guess(mdl, nf)
     # we can use the special sturcutre of the loss and use scipy.optimize.least_suqares()
@@ -277,7 +327,7 @@ def test_normalform_transform():
         res.x, 1, nf, n_unknowns_dynamics, n_unknowns_transformation
     )
     trf, dyn = wrap_optimized_coefficients(
-        1, nf, 5, d, find_inverse=True, trajectories=trajectories, near_identity=True
+        1, nf, 5, d, find_inverse=True, trajectories=trajectories, raw_coeffs=res.x, near_identity=True
     )
     image = trf.inverse_transform(trajectories)
     inversetransformed = [trf.transform(t) for t in image]
@@ -305,83 +355,65 @@ def test_misc_conjugates():
 
     conj_first = np.concatenate((coeffs @ XX, np.conj(coeffs) @ np.conj(XX)), axis=0)
 
-    print(np.allclose(conj_first, conj_second))
+    assert np.allclose(conj_first, conj_second)
 
 
-def test_higher_dim_manifold():
+def test_4d_manifold_fit_convergence():
     from ssmlearnpy.main.main import SSMLearn
 
     t = np.linspace(0, 100, 10000)
-    signal = np.sin(t) + np.sin(3 * t)
-    for dim in [4]:
-        print(f"################## Order {dim} ##################")
-
-        xData = [[t, np.array([signal])]]
-        t_y, y, _ = coordinates_embedding(
-            [xData[0][0]],
-            [xData[0][1]],
-            imdim=dim,
-        )
-        t = t_y[0]
-        ssm = SSMLearn(
-            t=t_y,
-            x=y,
-            derive_embdedding=False,
-            ssm_dim=dim,
-            dynamics_type="flow",
-            dynamics_structure="normalform",
-        )
-        ssm.get_parametrization()
-        ssm.get_reduced_dynamics(
-            normalform_args={
-                "degree": 3,
-                "do_scaling": True,
-                "tolerance": None,
-                "ic_style": "random",
-                "method": "trf",
-                "jac": "3-point",
-                "max_iter": 1000,
-                "use_center_manifold_style": True,
-            }
-        )
-        observable_traj = ssm.emb_data["observables"][0]
-        reduced_traj = ssm.emb_data["reduced_coordinates"][0]
-        nf_gt = ssm.normalform_transformation.inverse_transform(reduced_traj)
-        pred_nf = solve_ivp(
-            ssm.reduced_dynamics.map_info["vectorfield"],
-            [t[0], t[-1]],
-            nf_gt[:, 0],
-            t_eval=t,
-            method="DOP853",
-        ).y
-        pred_reduced = ssm.normalform_transformation.transform(pred_nf).real
-        pred_obs = ssm.decoder.predict(pred_reduced.T).T
-        plt.figure()
-        plt.plot(t, observable_traj[0], label="Signal")
-        plt.plot(t, pred_obs[0], label="Prediction")
-        plt.show()
-
-
-def test_2_dim_manifold():
-    from ssmlearnpy.main.main import SSMLearn
-
-    t = np.linspace(0, 100, 1000)
-    signal = np.sin(t)
-    # plt.figure()
-    # plt.plot(t, x)
-    # plt.show()
+    signal = np.exp(-0.1*t)*np.sin(t) +  np.exp(-0.37*t)*np.sin(3.2 * t)
+    dim = 4
     xData = [[t, np.array([signal])]]
     t_y, y, _ = coordinates_embedding(
         [xData[0][0]],
         [xData[0][1]],
-        imdim=2,
+        imdim=dim,
     )
     t = t_y[0]
     ssm = SSMLearn(
         t=t_y,
         x=y,
         derive_embdedding=False,
-        ssm_dim=2,
+        ssm_dim=dim,
+        dynamics_type="flow",
+        dynamics_structure="normalform",
+    )
+    ssm.get_parametrization()
+    ssm.get_reduced_dynamics(
+        normalform_args={
+            "degree": 3,
+            "do_scaling": False,
+            "tolerance": None,
+            "ic_style": "zero",
+            "method": "trf",
+            "jac": "3-point",
+            "max_iter": 1000,
+            "use_center_manifold_style": True,
+        }
+    )
+    assert ssm.reduced_dynamics.map_info['normalform_transformation'] is not None
+
+
+
+def test_2d_manifold_fit_normal_form_dynamics():
+    from ssmlearnpy.main.main import SSMLearn
+
+    t = np.linspace(0, 100, 10000)
+    signal = np.exp(-0.1*t)*np.sin(t)
+    dim = 2
+    xData = [[t, np.array([signal])]]
+    t_y, y, _ = coordinates_embedding(
+        [xData[0][0]],
+        [xData[0][1]],
+        imdim=dim,
+    )
+    t = t_y[0]
+    ssm = SSMLearn(
+        t=t_y,
+        x=y,
+        derive_embdedding=False,
+        ssm_dim=dim,
         dynamics_type="flow",
         dynamics_structure="normalform",
     )
@@ -391,14 +423,112 @@ def test_2_dim_manifold():
             "degree": 3,
             "do_scaling": True,
             "tolerance": None,
-            "ic_style": "random",
+            "ic_style": "zero",
             "method": "trf",
             "jac": "3-point",
             "max_iter": 1000,
             "use_center_manifold_style": True,
         }
     )
-    observable_traj = ssm.emb_data["observables"][0]
+    reduced_traj = ssm.emb_data["reduced_coordinates"][0]
+    nf_gt = ssm.normalform_transformation.inverse_transform(reduced_traj)
+    assert np.allclose(nf_gt[0,:], np.conj(nf_gt[1,:])) # check structure of the coordinates
+    pred_nf = solve_ivp(
+        ssm.reduced_dynamics.map_info["vectorfield"],
+        [t[0], t[-1]],
+        nf_gt[:, 0],
+        t_eval=t,
+        method="RK45",
+    ).y
+    # prediction errors
+    assert np.allclose(pred_nf[0,:], nf_gt[0,:], atol = 1e-3) # comparable to matlab
+    
+    
+
+
+def test_4d_manifold_fit_normal_form_dynamics():
+    from ssmlearnpy.main.main import SSMLearn
+
+    t = np.linspace(0, 100, 10000)
+    signal = np.exp(-0.1*t)*np.sin(t) +  np.exp(-0.37*t)*np.sin(3.2 * t)
+    dim = 4
+    xData = [[t, np.array([signal])]]
+    t_y, y, _ = coordinates_embedding(
+        [xData[0][0]],
+        [xData[0][1]],
+        imdim=dim,
+    )
+    t = t_y[0]
+    ssm = SSMLearn(
+        t=t_y,
+        x=y,
+        derive_embdedding=False,
+        ssm_dim=dim,
+        dynamics_type="flow",
+        dynamics_structure="normalform",
+    )
+    ssm.get_parametrization()
+    ssm.get_reduced_dynamics(
+        normalform_args={
+            "degree": 3,
+            "do_scaling": True,
+            "tolerance": None,
+            "ic_style": "zero",
+            "method": "trf",
+            "jac": "3-point",
+            "max_iter": 1000,
+            "use_center_manifold_style": True,
+        }
+    )
+    reduced_traj = ssm.emb_data["reduced_coordinates"][0]
+    nf_gt = ssm.normalform_transformation.inverse_transform(reduced_traj)
+    assert np.allclose(nf_gt[0,:], np.conj(nf_gt[2,:])) # check structure of the coordinates
+    pred_nf = solve_ivp(
+        ssm.reduced_dynamics.map_info["vectorfield"],
+        [t[0], t[-1]],
+        nf_gt[:, 0],
+        t_eval=t,
+        method="RK45",
+    ).y
+    # prediction errors
+    # slow component is very accurate
+    assert np.allclose(pred_nf[0,:], nf_gt[0,:], atol = 1e-4) # comparable to matlab
+    assert np.allclose(pred_nf[1,:], nf_gt[1,:], atol = 3e-3) # comparable to matlab
+    
+
+def test_4d_manifold_fit_normal_form_inverse_transform(show_plot = False):
+    from ssmlearnpy.main.main import SSMLearn
+    t = np.linspace(0, 100, 10000)
+    signal = np.exp(-0.1*t)*np.sin(t) +  np.exp(-0.37*t)*np.sin(3.2 * t)
+    dim = 4
+    xData = [[t, np.array([signal])]]
+    t_y, y, _ = coordinates_embedding(
+        [xData[0][0]],
+        [xData[0][1]],
+        imdim=dim,
+    )
+    t = t_y[0]
+    ssm = SSMLearn(
+        t=t_y,
+        x=y,
+        derive_embdedding=False,
+        ssm_dim=dim,
+        dynamics_type="flow",
+        dynamics_structure="normalform",
+    )
+    ssm.get_parametrization()
+    ssm.get_reduced_dynamics(
+        normalform_args={
+            "degree": 3,
+            "do_scaling": True,
+            "tolerance": None,
+            "ic_style": "zero",
+            "method": "trf",
+            "jac": "3-point",
+            "max_iter": 1000,
+            "use_center_manifold_style": True,
+        }
+    )
     reduced_traj = ssm.emb_data["reduced_coordinates"][0]
     nf_gt = ssm.normalform_transformation.inverse_transform(reduced_traj)
     pred_nf = solve_ivp(
@@ -406,14 +536,33 @@ def test_2_dim_manifold():
         [t[0], t[-1]],
         nf_gt[:, 0],
         t_eval=t,
-        method="DOP853",
+        method="RK45",
     ).y
     pred_reduced = ssm.normalform_transformation.transform(pred_nf).real
-    pred_obs = ssm.decoder.predict(pred_reduced.T).T
-    plt.figure()
-    plt.plot(t, observable_traj[0], label="Signal")
-    plt.plot(t[: pred_obs[0].shape[0]], pred_obs[0], label="Prediction")
-    plt.show()
+    if show_plot: 
+        plt.figure()
+        plt.title('Normal form coords: z1')
+        plt.plot(nf_gt[0,:].real, nf_gt[0,:].imag, '-', label = 'True')
+        plt.plot(pred_nf[0,:].real, pred_nf[0,:].imag, '--', label = 'Pred')
+        plt.legend()
+        
+        plt.figure()
+        plt.title('Normal form coords: z2')
+        plt.plot(nf_gt[1,:].real, nf_gt[1,:].imag, '-', label = 'True')
+        plt.plot(pred_nf[1,:].real, pred_nf[1,:].imag, '--', label = 'Pred')
+        plt.legend()
+        
+        plt.figure()
+        plt.title('Reduced coords')
+        plt.plot(reduced_traj[0,:], reduced_traj[1,:], '-', label = 'True')
+        plt.plot(pred_reduced[0,:], pred_reduced[1,:], '--', label = 'Pred')
+        plt.legend()
+        
+        plt.show()
+    # prediction errors
+    assert np.allclose(reduced_traj[0,:], pred_reduced[0,:], atol = 1e-3)
+    assert np.allclose(reduced_traj[1,:], pred_reduced[1,:], atol = 1e-3)
+    
 
 
 if __name__ == "__main__":
@@ -429,11 +578,6 @@ if __name__ == "__main__":
     # test_fit_inverse()
     # test_normalform_transform()
 
-    import ipdb
-
-    try:
-        # test_2_dim_manifold()
-        test_higher_dim_manifold()
-    except Exception as e:
-        print(e)
-        ipdb.post_mortem()
+    
+    test_4d_manifold_fit_normal_form_inverse_transform(show_plot=True)
+    
