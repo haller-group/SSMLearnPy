@@ -6,7 +6,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import PolynomialFeatures, FunctionTransformer
 from sklearn.gaussian_process.kernels import Kernel
 
-from sklearn.pipeline import Pipeline, FeatureUnion
+from sklearn.pipeline import Pipeline, FeatureUnion, make_pipeline
 from sklearn.linear_model import Ridge
 from sklearn.linear_model import RidgeCV
 from sklearn.base import BaseEstimator, TransformerMixin
@@ -24,10 +24,124 @@ from ssmlearnpy.utils.preprocessing import (
 )
 from typing import NamedTuple, Optional
 from scipy.optimize import minimize, least_squares, lsq_linear
+from sklearn.base import BaseEstimator, TransformerMixin
+
+
+class ForcingFeatureAdder(BaseEstimator, TransformerMixin):
+    def __init__(self, forcing_features):
+        self.forcing_features = forcing_features
+    def fit(self, X, y=None):
+        return self
+    def transform(self, X):
+        return self.forcing_features
 
 
 logger = logging.getLogger("ridge_regression")
 
+def get_fit_ridge_forced(
+    X, 
+    y,
+    forcing_features,
+    do_scaling: bool = True,
+    poly_degree: int=2,
+    fit_intercept: bool=False,
+    alpha: list=0,
+):
+    """Fit a ridge regression model to the data. 
+    Parameters:
+    ----------
+        X: (n_features, n_samples) or list 
+        y: (n_outputs, n_samples) or list 
+        forcing_features: (n_outputs, n_samples) or list
+        constraints: list of lists: [LHS, RHS] such that model.predict(LHS[i]) == RHS[i].
+                 model.predict(LHS[i]) and RHS[i] should have the same shape
+        do_scaling: bool, whether to apply a StandardScaler to the data before fitting
+        poly_degree: int, degree of the polynomial to fit
+        fit_intercept: bool, whether to include the constant term in the regression
+                        if False, this means that the model will be forced to pass through the origin
+        alpha: float or list of floats, regularization parameter
+    Returns:
+    -------
+        mdl: sklearn Pipeline object containing a PolynomialFeatures,
+                 an optional StandardScaler, and Ridge regression
+        forcing_direction: (n_outputs, n_forcing_features) array 
+    """    
+    if isinstance(X, list):
+        logger.info("Transforming data")
+        X = get_matrix(X)
+        y = get_matrix(y)
+        forcing_features = get_matrix(forcing_features).T
+        print(X.shape, y.shape, forcing_features.shape)
+    
+    logger.debug(f"X shape: {X.shape}, y shape: {y.shape}")
+
+    logger.info("Skipping CV on ridge regression")
+    if isinstance(alpha, list):
+        raise RuntimeError("Found alpha to be a list and cv to be <2.")
+    regressor = Ridge(
+            fit_intercept=fit_intercept,
+            alpha=alpha
+            )
+    logger.info(f"Using polynomial features degree {poly_degree}")
+    feature_transf = FeatureUnion([
+    ('poly_transf', PolynomialFeatures(degree=poly_degree, include_bias=False)),
+    ('forcing_transf', ForcingFeatureAdder(forcing_features))
+    ])
+
+    if do_scaling:# default is to include a standard scaler
+        mdl = Pipeline(
+            [
+                ('feature_transf', feature_transf),
+                ('scaler', StandardScaler(with_mean=False)),
+                ('ridge_regressor', regressor)
+            ]
+        )
+    else:
+        mdl = Pipeline(
+            [
+                ('feature_transf', feature_transf),
+                ('ridge_regressor', regressor)
+            ]
+        )
+    # explicitly set sample weights to 1 in case we have constraints
+    sample_weight = np.ones(X.shape[1])
+    
+    logger.info("Fitting regression model")
+
+    # mdl.predict() expects the matrix in the form (n_samples, n_features)
+    mdl.fit(X.T, y.T, ridge_regressor__sample_weight = sample_weight)
+    
+    mdl.map_info = {}
+    map_coefs = np.zeros(mdl.named_steps.ridge_regressor.coef_.shape)
+
+    if do_scaling:
+        scaler_coefs = mdl.named_steps.scaler.scale_
+    else:
+        scaler_coefs = np.ones(map_coefs.shape[1])
+    
+    map_coefs = mdl.named_steps.ridge_regressor.coef_ / scaler_coefs
+
+    # Get polynomial feature transformer
+    poly = mdl.named_steps.feature_transf.transformer_list[0][1]
+    n_forcing = forcing_features.shape[1]
+    autonomous_coefs = map_coefs[:, :-n_forcing] # exclude the forcing features
+    forcing_direction = map_coefs[:,-n_forcing:]
+
+    # Create a new Ridge model for the autonomous part
+    autonomous_mdl = make_pipeline(
+        poly,
+        Ridge(fit_intercept=fit_intercept)
+    )
+    # Set the coefficients directly
+    autonomous_mdl.named_steps['ridge'].coef_ = autonomous_coefs
+    autonomous_mdl.named_steps['ridge'].intercept_ = np.zeros(autonomous_coefs.shape[0])
+
+    # Add map_info attribute
+    autonomous_mdl.map_info = {}
+    autonomous_mdl.map_info['coefficients'] = autonomous_coefs
+    autonomous_mdl.map_info['exponents'] = poly.powers_
+
+    return autonomous_mdl, forcing_direction
 
 def get_fit_ridge(
     X,

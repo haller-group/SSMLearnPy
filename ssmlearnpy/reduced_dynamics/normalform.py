@@ -24,7 +24,7 @@ class NonlinearCoordinateTransform:
     If the original coordinates are denoted z, we realize a change of coordinates to y = T(z)
     and z = T^{-1}(y).
     The transformation T and its inverse are polynomial maps of a specified degree.
-    No constant term is included, but the linear part is peresent.
+    No constant term is included, but the linear part is present.
 
     The tranformation is given as a PolyinomialFeatures object multiplied by a vector of coefficients
     If the data is given as a matrix Z of shape (n_features, n_samples)
