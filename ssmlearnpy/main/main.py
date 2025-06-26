@@ -253,6 +253,7 @@ class SSMLearn:
             "max_iter": 1000,
             "method": "lm",
             "jac": "2-point",
+            "use_center_manifold_style": True,
         },
         **regression_args,
     ) -> None:
@@ -451,7 +452,8 @@ class SSMLearn:
             reduced_dynamics_predictions["reduced_coordinates"] = x_predict
             reduced_dynamics_predictions["errors"] = prediction_errors
             return reduced_dynamics_predictions
-
+    # Bug: This method doens't work for normal form dynamics, 
+    # instead: extract reduced dynamics with self.reduced_dynamics.map_info['vectorfield'] and advect
     def predict(self, idx_trajectories=0, t=[], x=[], x_reduced=[]) -> None:
         if bool(t) is False:
             if idx_trajectories == 0:
