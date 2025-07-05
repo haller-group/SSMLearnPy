@@ -37,7 +37,7 @@ def nte_error(
     x_reference,
     x_prediction
     ):
-    x_norm = np.max(np.sum(np.square(x_reference), axis=0))
+    x_norm = np.max(np.sqrt(np.sum(np.square(x_reference), axis=0)))
     x_error = np.sqrt(np.sum(np.square(x_reference-x_prediction), axis=0)) / x_norm
     return x_error
 
@@ -45,7 +45,7 @@ def nmte_error(
     x_reference,
     x_prediction
     ):
-    x_norm = np.max(np.sum(np.square(x_reference), axis=0))
+    x_norm = np.max(np.sqrt(np.sum(np.square(x_reference), axis=0)))
     x_error = np.mean(np.sqrt(np.sum(np.square(x_reference-x_prediction), axis=0))) / x_norm
     return x_error
 

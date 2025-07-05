@@ -19,7 +19,11 @@ from ssmlearnpy.utils.ridge import (
 from ssmlearnpy.utils.ridge import get_matrix
 from ssmlearnpy.utils.file_handler import get_vectors
 from ssmlearnpy.utils.plots import compute_surface
+<<<<<<< HEAD
 from ssmlearnpy.utils.data import SSMData, SSMDataAttribute
+=======
+from ssmlearnpy.utils.preprocessing import sort_complex_eigenpairs
+>>>>>>> dev
 import ssmlearnpy.reduced_dynamics.normalform as normalform
 from scipy.optimize import minimize, least_squares
 from copy import deepcopy
@@ -254,6 +258,7 @@ class SSMLearn:
             "max_iter": 1000,
             "method": "lm",
             "jac": "2-point",
+            "use_center_manifold_style": True,
         },
         **regression_args,
     ) -> None:
@@ -283,6 +288,7 @@ class SSMLearn:
             self.reduced_dynamics = get_fit_ridge(X, y, **regression_args)
         linear_part = self.reduced_dynamics.map_info["coefficients"][:, : X[0].shape[0]]
         d, v = np.linalg.eig(linear_part)
+        all_complex = (np.abs(d.imag) > 0).all()
         self.reduced_dynamics.map_info["eigenvalues_linear_part"] = d
         self.reduced_dynamics.map_info["eigenvectors_linear_part"] = v
         self.eigenvalues = d
@@ -290,7 +296,7 @@ class SSMLearn:
         self.reduced_coords_dynamics = deepcopy(self.reduced_dynamics)
 
         if (
-            self.dynamics_structure == "normalform" and d.dtype == complex
+            self.dynamics_structure == "normalform" and all_complex
         ):  # compute the normal form transformation after an initial guess has been computed
             ndofs = int(linear_part.shape[0] / 2)
             if self.ssm_dim % 2 != 0:
@@ -336,7 +342,7 @@ class SSMLearn:
                 method=normalform_args["method"],
                 jac=normalform_args["jac"],
                 max_nfev=normalform_args["max_iter"],
-                # max_nfev=1,
+                #max_nfev=1,
             )
             if not res.success:
                 print(f"Optimization did not converge. Message: {res.message}")
@@ -451,7 +457,8 @@ class SSMLearn:
             reduced_dynamics_predictions["reduced_coordinates"] = x_predict
             reduced_dynamics_predictions["errors"] = prediction_errors
             return reduced_dynamics_predictions
-
+    # Bug: This method doens't work for normal form dynamics, 
+    # instead: extract reduced dynamics with self.reduced_dynamics.map_info['vectorfield'] and advect
     def predict(self, idx_trajectories=0, t=[], x=[], x_reduced=[]) -> None:
         if bool(t) is False:
             if idx_trajectories == 0:

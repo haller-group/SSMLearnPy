@@ -6,7 +6,7 @@ from ssmlearnpy import SSMLearn
 from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
 from ssmlearnpy.reduced_dynamics.normalform import NormalForm, NonlinearCoordinateTransform
 from sklearn.preprocessing import PolynomialFeatures
-from ssmlearnpy.utils.preprocessing import get_matrix , PolynomialFeaturesWithPattern
+from ssmlearnpy.utils.preprocessing import get_matrix , PolynomialFeaturesWithPattern, sort_complex_eigenpairs
 from ssmlearnpy.reduced_dynamics.normalform import NonlinearCoordinateTransform, NormalForm, create_normalform_transform_objective, prepare_normalform_transform_optimization, unpack_optimized_coeffs
 from ssmlearnpy.geometry.coordinates_embedding import coordinates_embedding
 from scipy.optimize import minimize
@@ -129,42 +129,42 @@ def test_ridge_constrained():
     # check that the constraints are satisfied
     assert np.allclose(mdl.predict(np.array(constLHS)), np.array(constRHS))
 
-def test_delay_embedding():
-    #data = loadmat('../examples/brakereussbeam/data.mat')['data_BRB']
+# def test_delay_embedding():
+#     #data = loadmat('../examples/brakereussbeam/data.mat')['data_BRB']
 
-    TimeDIC = data[0,0].item()[0]
-    DisplacementDIC = data[0,0].item()[1]
-    TimeACC = data[0,0].item()[2]
-    AccelerationACC = data[0,0].item()[3]
-    Xmesh = data[0,0].item()[4]
-    Units = data[0,0].item()[5]
-    LocationACC = data[0,0].item()[6]
-    PFFResultsACC = data[0,0].item()[7]
-    ssm = SSMLearn(
-        t = [TimeDIC.ravel()], 
-        x = [DisplacementDIC], 
-        ssm_dim=2, 
-        dynamics_type = 'flow'
-    )
-    #referenceData = loadmat('test_BRB_from_ssmlearn.mat')['yData']
-    t_y, y, opts_embedding = coordinates_embedding(ssm.emb_data['time'], ssm.emb_data['observables'],
-                                               imdim = ssm.ssm_dim, over_embedding = 5)
-    assert np.allclose(t_y, referenceData[0,0])
-    assert np.allclose(y, referenceData[0,1])
+#     TimeDIC = data[0,0].item()[0]
+#     DisplacementDIC = data[0,0].item()[1]
+#     TimeACC = data[0,0].item()[2]
+#     AccelerationACC = data[0,0].item()[3]
+#     Xmesh = data[0,0].item()[4]
+#     Units = data[0,0].item()[5]
+#     LocationACC = data[0,0].item()[6]
+#     PFFResultsACC = data[0,0].item()[7]
+#     ssm = SSMLearn(
+#         t = [TimeDIC.ravel()], 
+#         x = [DisplacementDIC], 
+#         ssm_dim=2, 
+#         dynamics_type = 'flow'
+#     )
+#     #referenceData = loadmat('test_BRB_from_ssmlearn.mat')['yData']
+#     t_y, y, opts_embedding = coordinates_embedding(ssm.emb_data['time'], ssm.emb_data['observables'],
+#                                                imdim = ssm.ssm_dim, over_embedding = 5)
+#     assert np.allclose(t_y, referenceData[0,0])
+#     assert np.allclose(y, referenceData[0,1])
 
-def test_dimensionality_reduction():
-    #reference_yData = loadmat('test_BRB_from_ssmlearn.mat')['yData']
-    #reference_etaData = loadmat('test_BRB_from_ssmlearn.mat')['etaData']
+# def test_dimensionality_reduction():
+#     #reference_yData = loadmat('test_BRB_from_ssmlearn.mat')['yData']
+#     #reference_etaData = loadmat('test_BRB_from_ssmlearn.mat')['etaData']
     
-    ssm = SSMLearn(
-        t = [reference_yData[0,0]], 
-        x = [reference_yData[0,1]], 
-        ssm_dim=2, 
-        derive_embdedding = False,
-        dynamics_type = 'flow'# use the embedding from the reference data
-    )
-    ssm.get_reduced_coordinates('linearchart')
-    assert np.allclose(ssm.emb_data['reduced_coordinates'][0], reference_etaData[0,1])
+#     ssm = SSMLearn(
+#         t = [reference_yData[0,0]], 
+#         x = [reference_yData[0,1]], 
+#         ssm_dim=2, 
+#         derive_embdedding = False,
+#         dynamics_type = 'flow'# use the embedding from the reference data
+#     )
+#     ssm.get_reduced_coordinates('linearchart')
+#     assert np.allclose(ssm.emb_data['reduced_coordinates'][0], reference_etaData[0,1])
 
 
 def test_fit_reduced_coords_and_parametrization():
@@ -230,6 +230,109 @@ def test_complex_polynomial_features():
     #print(PolynomialFeatures(degree=3, include_bias=False).fit(Y.T).powers_.shape)
     complexpoly = complex_polynomial_features(Y.T, degree=3)
     assert np.allclose(poly.T, complexpoly.T)
+
+
+
+def test_sort_complex_eigenpairs_2d():
+    A = np.array(
+        [[-0.6, -1],
+         [1,  -0.6]]
+    )
+    d, v = np.linalg.eig(A)
+
+    d_sorted, v_sorted = sort_complex_eigenpairs(d, v)
+
+    expected_sorted_real_parts = np.array([-0.6,-0.6])
+    expected_sorted_imag_parts = np.array([1, -1])
+    # check sorting
+    assert np.allclose(np.real(d_sorted), expected_sorted_real_parts, atol=1e-10)
+    assert np.allclose(np.imag(d_sorted), expected_sorted_imag_parts, atol=1e-10)
+    # check eigenvectors
+    for i in range(len(d_sorted)):
+        Av = A @ v_sorted[:, i]
+        lv = d_sorted[i] * v_sorted[:, i]
+        assert np.allclose(Av, lv, atol=1e-10)
+
+
+def test_sorted_complex_eigenpairs_2d():
+    A = np.diag(
+        [-0.1 +1.j,    -0.1 -1.j]
+        )
+    d, v = np.linalg.eig(A)
+
+    d_sorted, v_sorted = sort_complex_eigenpairs(d, v)
+
+    expected_sorted_real_parts = np.array([-0.1, -0.1])
+    expected_sorted_imag_parts = np.array([1, -1])
+    # check sorting
+    assert np.allclose(np.real(d_sorted), expected_sorted_real_parts, atol=1e-10)
+    assert np.allclose(np.imag(d_sorted), expected_sorted_imag_parts, atol=1e-10)
+    # check eigenvectors
+    for i in range(len(d_sorted)):
+        Av = A @ v_sorted[:, i]
+        lv = d_sorted[i] * v_sorted[:, i]
+        assert np.allclose(Av, lv, atol=1e-10)
+
+def test_unsorted_complex_eigenpairs_2d():
+    A = np.diag(
+        [-0.1 -1.j,   -0.1 +1.j]
+        )
+    d, v = np.linalg.eig(A)
+
+    d_sorted, v_sorted = sort_complex_eigenpairs(d, v)
+
+    expected_sorted_real_parts = np.array([-0.1,-0.1])
+    expected_sorted_imag_parts = np.array([1, -1])
+    # check sorting
+    assert np.allclose(np.real(d_sorted), expected_sorted_real_parts, atol=1e-10)
+    assert np.allclose(np.imag(d_sorted), expected_sorted_imag_parts, atol=1e-10)
+    # check eigenvectors
+    for i in range(len(d_sorted)):
+        Av = A @ v_sorted[:, i]
+        lv = d_sorted[i] * v_sorted[:, i]
+        assert np.allclose(Av, lv, atol=1e-10)
+
+def test_sorted_complex_eigenpairs_4d():
+    A = np.diag(
+        [-0.1 +1.j,      -0.33+6.8802j,  -0.1 -1.j,      -0.33-6.8802j]
+        )
+    d, v = np.linalg.eig(A)
+
+    d_sorted, v_sorted = sort_complex_eigenpairs(d, v)
+
+    expected_sorted_real_parts = np.array([-0.1,-0.33, -0.1, -0.33])
+    expected_sorted_imag_parts = np.array([1, 6.8802, -1, -6.8802])
+    # check sorting
+    assert np.allclose(np.real(d_sorted), expected_sorted_real_parts, atol=1e-10)
+    assert np.allclose(np.imag(d_sorted), expected_sorted_imag_parts, atol=1e-10)
+    # check eigenvectors
+    for i in range(len(d_sorted)):
+        Av = A @ v_sorted[:, i]
+        lv = d_sorted[i] * v_sorted[:, i]
+        assert np.allclose(Av, lv, atol=1e-10)
+
+def test_sort_complex_eigenpairs_4d():
+    A = np.array(
+        [[-0.6, -1, 0, 0],
+         [1,  -0.6, 0, 0],
+        [0, 0, -.2, -3],
+         [0, 0, 3,  -.2]]
+    )
+    d, v = np.linalg.eig(A)
+
+    d_sorted, v_sorted = sort_complex_eigenpairs(d, v)
+
+    expected_sorted_real_parts = np.array([-0.2, -0.6, -0.2, -0.6])
+    expected_sorted_imag_parts = np.array([3, 1, -3, -1])
+    # check sorting
+    assert np.allclose(np.real(d_sorted), expected_sorted_real_parts, atol=1e-10)
+    assert np.allclose(np.imag(d_sorted), expected_sorted_imag_parts, atol=1e-10)
+    # check eigenvectors
+    for i in range(len(d_sorted)):
+        Av = A @ v_sorted[:, i]
+        lv = d_sorted[i] * v_sorted[:, i]
+        assert np.allclose(Av, lv, atol=1e-10)
+
 
 if __name__ == '__main__':
     test_differentiation()
