@@ -2,7 +2,8 @@
 Main init file
 """
 
-import pkg_resources
+import numpy as np
+from typing import List
 
 from .base.apipkg import initpkg
 
@@ -26,3 +27,5 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+LArr = List[np.ndarray]

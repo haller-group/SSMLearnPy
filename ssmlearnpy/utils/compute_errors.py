@@ -2,10 +2,10 @@ import logging
 
 import numpy as np
 
-def compute_errors(reference,
-            prediction,
-            metric='NTE'
-    ):
+from ssmlearnpy import LArr
+
+
+def compute_errors(reference: LArr, prediction: LArr, metric="NTE"):
     if metric == 'NTE':
         error_fun = nte_error
     elif metric == 'NMTE':
@@ -25,13 +25,14 @@ def compute_errors(reference,
     errors = []
     for i_elem in range(len(reference)):
         if np.sum(np.isnan(prediction[i_elem])) > 0:
-            error_i = np.empty(reference[i_elem].shape, dtype=float), 
+            error_i = np.empty(reference[i_elem].shape, dtype=float)
             error_i.fill(np.nan)
         else:
             error_i = error_fun(reference[i_elem],prediction[i_elem])
         errors.append(error_i)
 
     return errors
+
 
 def nte_error(
     x_reference,

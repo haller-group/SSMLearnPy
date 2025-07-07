@@ -7,7 +7,7 @@ import numpy as np
 
 logger = logging.getLogger("file_handler")
 
-def get_vectors(dir: str):
+def get_vectors(dir: str)-> tuple[list[np.ndarray], list[np.ndarray]]:
     """
     The function reads from a folder all the csv files and output the vectors
     time and trajectories for subsequent analysis using SSMLearn.
@@ -25,17 +25,14 @@ def get_vectors(dir: str):
     """
     base_path = Path(dir)
     dfs = []
-    list_of_files = base_path.glob("*.csv")
-    
-    if len(list_of_files) == 0:
-        print("No csv file found. \n")
-        return None 
 
     for f in base_path.glob("*.csv"):
         logger.info(f"Reading file: {f}")
         dfs.append(
             pd.read_csv(f)
         )
+
+    assert len(dfs) > 0, "No CSV files found in the directory."
 
     # Time vector is reshaped into (1, m) - see notation in docstring
     time = [df.iloc[:,0].values for df in dfs]

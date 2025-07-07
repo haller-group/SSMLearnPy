@@ -1,6 +1,8 @@
 import numpy as np
-
+from typing import Tuple, Dict
 import logging
+
+from ssmlearnpy import LArr
 
 logger = logging.getLogger("coordinates_embedding")
 
@@ -8,13 +10,12 @@ logger = logging.getLogger("coordinates_embedding")
 def coordinates_embedding(
     t: list,
     x: list,
-    imdim: int = None,
-    offset: np.ndarray = None,
+    imdim: int,
     over_embedding: int = 0,
     force_embedding: bool = False,
     time_stepping: int = 1,
     shift_steps: int = 1,
-):
+) -> Tuple[LArr, LArr, Dict]:
     """
     Returns the n-dim. time series x into a time series of properly embedded
     coordinate system y of dimension p. Optional inputs to be specified as
@@ -25,9 +26,6 @@ def coordinates_embedding(
     x : list of observed trajectories
     imdim - dimension of the invariant manifold to learn
 
-    offsets (optional): list containing an offset vector for each trajectory. The offset should shift
-                        the fixed point to the origin once subtracted. If not provided, the fixed point
-                        is assumed to be at the origin.
     over_embedding (optional): augment the minimal embedding dimension with a number of
                      time delayed measurements, default 0
     force_embedding (optional): force the embedding in the states of x, default false
@@ -44,18 +42,12 @@ def coordinates_embedding(
     opts_embdedding : options containing the embedding information, including new offset vector if offset was provided
 
     """
-    if not imdim:
-        raise RuntimeError("imdim not specified for coordinates embedding")
+
     n_observables = x[0].shape[0]
     n_n = int(np.ceil((2 * imdim + 1) / n_observables) + over_embedding)
-    if offset is None:
-        _offset = np.zeros(n_observables)
-    else:
-        _offset = offset
 
-    t_y = []
-    y = []
-    embedded_offset = None
+    t_y: LArr = []
+    y: LArr = []
 
     # Construct embedding coordinate system
     if n_n > 1 and force_embedding != 1:
@@ -91,7 +83,6 @@ def coordinates_embedding(
 
             y.append(y_i[:, : -n_n * shift_steps + 1])
             t_y.append(t_i[subsample[: -n_n * shift_steps + 1]])
-        embedded_offset = np.tile(_offset, n_n)
 
     else:
         p = n_observables
@@ -108,11 +99,6 @@ def coordinates_embedding(
         else:
             t_y = t
             y = x
-        embedded_offset = _offset
-
-    # To improve consistency with existing code, we return None rather than zero offset if no offset is provided
-    if offset is None:
-        embedded_offset = None
 
     opts_embdedding = {
         "imdim": imdim,
@@ -121,7 +107,6 @@ def coordinates_embedding(
         "time_stepping": time_stepping,
         "shift_steps": shift_steps,
         "embedding_space_dim": p,
-        "embedded_offset": embedded_offset,
     }
 
     return t_y, y, opts_embdedding
