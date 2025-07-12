@@ -12,10 +12,14 @@ from ssmlearnpy.geometry.dimensionality_reduction import (
 from ssmlearnpy import LArr
 from ssmlearnpy.geometry.encode_decode import decode_geometry
 from ssmlearnpy.geometry.encode_decode import encode_geometry
+from ssmlearnpy.geometry.oblique_projection import *
 
 from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
 from ssmlearnpy.reduced_dynamics.advector import advect
-from ssmlearnpy.reduced_dynamics.normalform import NonlinearCoordinateTransform
+from ssmlearnpy.reduced_dynamics.normalform import (
+    Dynamics,
+    NonlinearCoordinateTransform,
+)
 
 from ssmlearnpy.utils.compute_errors import compute_errors
 from ssmlearnpy.utils.ridge import (
@@ -94,6 +98,7 @@ class SSMLearn:
     encoder: Optional[Union[LinearChart, BasicReducer]] = None
     decoder: Optional[Union[Pipeline, Decoder]] = None
     normalform_transformation: Optional[NonlinearCoordinateTransform] = None
+    reduced_dynamics: Optional[Union[Dynamics, Pipeline]] = None
     # TODO what is params. should it be in config, data or here?
     params: Optional[list] = field(default_factory=list)
     data: SSMData = field(default_factory=SSMData)
@@ -133,6 +138,15 @@ class SSMLearn:
     def import_data(path) -> tuple[LArr, LArr]:
         x, t = get_vectors(path)
         return x, t
+    
+    def preprocess(self):
+        """
+        
+        """
+        data = self.data
+        if self.config.ssm_dim is None:
+            try
+        
 
     def get_reduced_coordinates(
         self,
@@ -411,7 +425,9 @@ class SSMLearn:
 
         return data
 
-    def predict_reduced_dynamics(self, data: Optional[SSMData] = None) -> SSMData:
+    def predict_polynomial_reduced_dynamics(
+        self, data: Optional[SSMData] = None, use_polynomial=False
+    ) -> SSMData:
 
         assign_to_self = False
         if data is None:
@@ -421,7 +437,7 @@ class SSMLearn:
         assert data.reduced_coordinates.data, "No reduced coordinates found."
 
         t_pred, x_pred = advect(
-            dynamics=self.reduced_dynamics.predict,
+            dynamics=self.polynomial_reduced_dynamics.predict,
             t=data.embedded.time,
             x=data.reduced_coordinates.data,
             dynamics_type=self.config.dynamics_type,
@@ -457,21 +473,22 @@ class SSMLearn:
     ):
 
         _data = self.data if data is None else data
+        self.data = None
+        _ssm = deepcopy(self)
         _config = deepcopy(self.config)
         _config.dynamics_structure = "normalform"
         _config.error_metric = "NMTE"
 
         errors = []
         processed_orders = []
-        models = []
+        models: List[SSMLearn] = []
 
         for order in range(min_order, max_order + 1):
             LOGGER.info(f"Fitting normal form dynamics for order {order}")
             start_time = time()
-            _ssm = SSMLearn(
-                config=_config,
-                data=_data,
-            )
+            _config.normalform_args.degree = order
+            _ssm.data = _data
+            _ssm.config = _config
 
             _ssm.get_reduced_dynamics()
 
@@ -482,11 +499,10 @@ class SSMLearn:
             )
 
             error_processing_traj = False
-
-            for t, normal_form, embed in zip(
+            _ssm.data.advected_normal_coordinates.data = []
+            for t, normal_form in zip(
                 _ssm.data.embedded.time,
                 _ssm.data.normal_coordinates.data,
-                _ssm.data.embedded.data,
             ):
                 try:
                     if error_processing_traj:
@@ -555,7 +571,7 @@ class SSMLearn:
 
         optimal_model = models[index]
         optimal_model.config = self.config
-        self = optimal_model
+        self.update(optimal_model)
         return processed_orders, errors
 
     def fit_optimal_polynomial(
@@ -563,6 +579,8 @@ class SSMLearn:
     ):
 
         _data = self.data if data is None else data
+        self.data = None
+        _ssm = deepcopy(self)
         _config = deepcopy(self.config)
         _config.dynamics_structure = "generic"
         _config.error_metric = "NMTE"
@@ -573,12 +591,14 @@ class SSMLearn:
 
         for order in range(min_order, max_order + 1):
             start_time = time()
-            _ssm = SSMLearn(
-                config=_config,
-                data=_data,
-            )
+            _config.dynamics_poly_degree = order
+            _ssm.data = _data
+            _ssm.config = _config
             try:
-                _ssm.predict_reduced_dynamics()
+                _ssm.get_reduced_dynamics(
+                    recalculate_polynomial_dynamics=True, poly_degree=order
+                )
+                _ssm.predict_polynomial_reduced_dynamics()
             except Exception as e:
                 LOGGER.warning(
                     f"Polynomial dynamics optimisation for order {order} failed with error: {e}"
@@ -629,10 +649,17 @@ class SSMLearn:
         LOGGER.info(f"Optimal polynomial order: {processed_orders[index]}")
         optimal_model = models[index]
         optimal_model.config = self.config
-        self = optimal_model
+        self.update(optimal_model)
         return processed_orders, errors
 
-    def run(self, data: Optional[SSMData] = None):
+    # TODO add predict method
+    def predict(self, data: SSMData) -> SSMData:
+        """
+        Assume that only the input data is given, then run through the rest of the pipline.
+        """
+        pass
+
+    def fit(self, data: Optional[SSMData] = None):
         if data is None:
             data = self.data
 
@@ -695,3 +722,10 @@ class SSMLearn:
             ssm.data = SSMData()
 
         return ssm
+
+    def update(self, other: "SSMLearn") -> None:
+        """
+        Replace the current SSMLearn object with another one.
+        """
+        for attr in other.__dict__:
+            setattr(self, attr, getattr(other, attr))

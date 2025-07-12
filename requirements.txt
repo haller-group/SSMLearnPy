@@ -8,3 +8,5 @@ jupyter
 findiff
 ipdb
 numba
+polars
+nlopt

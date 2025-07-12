@@ -2,9 +2,6 @@
 Main init file
 """
 
-import numpy as np
-from typing import List
-
 from .base.apipkg import initpkg
 
 __all__ = ('__version__', )
@@ -19,6 +16,8 @@ initpkg(
 )
 
 import logging
+import numpy as np
+from typing import List
 
 logging.basicConfig(
     format='%(levelname) -6s %(asctime)s %(module)s %(message)s',
