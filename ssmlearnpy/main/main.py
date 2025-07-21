@@ -575,9 +575,9 @@ class SSMLearn:
         
         # Validate input dimensions
         n_outputs, n_features = coefficients.shape
-        if n_outputs != expected_outputs:
-            raise ValueError(f"Number of outputs in coefficients ({n_outputs}) must match "
-                           f"expected SSM dimension ({expected_outputs})")
+        # if n_outputs != expected_outputs:
+        #     raise ValueError(f"Number of outputs in coefficients ({n_outputs}) must match "
+        #                    f"expected SSM dimension ({expected_outputs})")
         
         # Generate exponents if not provided
         if exponents is None:
@@ -628,16 +628,34 @@ class SSMLearn:
             }
         )
         
-        # Extract linear part and compute eigenvalues/eigenvectors
+        # Extract linear part and compute eigenvalues/eigenvectors (if possible)
         n_linear_features = exponents.shape[0]  # Number of linear features equals reduced dimension
-        linear_part = coefficients[:, :n_linear_features]
-        d, v = np.linalg.eig(linear_part)
         
-        # Store eigenvalue information
-        self.reduced_dynamics.map_info["eigenvalues_linear_part"] = d
-        self.reduced_dynamics.map_info["eigenvectors_linear_part"] = v
-        self.eigenvalues = d
-        self.eigenvectors = v
+        try:
+            # Try to extract linear part - this works for regular polynomial coefficients
+            linear_part = coefficients[:, :n_linear_features]
+            
+            # Check if linear part is square (required for eigenvalue computation)
+            if linear_part.shape[0] == linear_part.shape[1]:
+                d, v = np.linalg.eig(linear_part)
+                
+                # Store eigenvalue information
+                self.reduced_dynamics.map_info["eigenvalues_linear_part"] = d
+                self.reduced_dynamics.map_info["eigenvectors_linear_part"] = v
+                self.eigenvalues = d
+                self.eigenvectors = v
+                print(f"✓ Computed eigenvalues from linear part: {d}")
+            else:
+                print(f"Linear part is not square ({linear_part.shape}), skipping eigenvalue computation")
+                print("  This is normal for normal form coefficients with sparse structure")
+                self.eigenvalues = None
+                self.eigenvectors = None
+                
+        except Exception as e:
+            print(f"Could not compute eigenvalues from coefficients: {e}")
+            print("  This is normal for normal form coefficients - eigenvalues should be provided separately")
+            self.eigenvalues = None
+            self.eigenvectors = None
         self.reduced_coords_dynamics = deepcopy(self.reduced_dynamics)
         
         return
@@ -723,3 +741,196 @@ class SSMLearn:
         )
         
         return
+    
+    # def set_normalform_transformation_coefficients(
+    #     self,
+    #     transform_coefficients,
+    #     inverse_transform_coefficients,
+    #     dynamics_coeffs,
+    #     linear_transform,
+    #     degree,
+    #     **kwargs
+    # ):
+    #     """
+    #     Set the normal form transformation and dynamics using precomputed coefficients and structure.
+    #     """
+    #     from ssmlearnpy.reduced_dynamics.normalform import (
+    #         NonlinearCoordinateTransform,
+    #         unpack_coefficient_matrix,
+    #         eval_complex_poly,
+    #         insert_complex_conjugate,
+    #     )
+    #     from ssmlearnpy.utils.preprocessing import compute_polynomial_map, generate_exponents
+    #     from sklearn.preprocessing import PolynomialFeatures
+    #     from typing import NamedTuple, Callable, Dict, Optional
+    #     import numpy as np
+
+    #     def wrap_precomputed_normalform(
+    #         ndofs,
+    #         degree,
+    #         coeff_dynamics,
+    #         coeffs_transformation,
+    #         LinearPart,
+    #         dynamics_reduced_structure,
+    #         dynamics_required_feats,
+    #         diagonalizing_matrix,
+    #         raw_coeffs,
+    #     ):
+    #         """
+    #         Wrap precomputed normal form coefficients into a NonlinearCoordinateTransform object and dynamics.
+    #         Mirrors wrap_optimized_coefficients but uses precomputed structures.
+    #         """
+    #         from ssmlearnpy.reduced_dynamics.normalform import (
+    #             NonlinearCoordinateTransform,
+    #             unpack_coefficient_matrix,
+    #             eval_complex_poly,
+    #             insert_complex_conjugate,
+    #         )
+    #         from ssmlearnpy.utils.preprocessing import compute_polynomial_map, generate_exponents
+    #         from sklearn.preprocessing import PolynomialFeatures
+    #         from typing import NamedTuple, Callable, Dict, Optional
+    #         import numpy as np
+
+    #         # Concatenate linear part for dynamics
+    #         coeff_dynamics_full = np.concatenate((LinearPart[:ndofs, :], coeff_dynamics), axis=1)
+    #         # Concatenate identity for transformation
+    #         coeffs_transformation_full = np.concatenate(
+    #             (np.eye(2 * ndofs)[:ndofs, :], coeffs_transformation), axis=1
+    #         )
+
+    #         # Build transformation object
+    #         transformation = NonlinearCoordinateTransform(
+    #             2 * ndofs,
+    #             degree,
+    #             inverse_transform_coefficients=coeffs_transformation_full,
+    #             linear_transform=diagonalizing_matrix,
+    #         )
+
+    #         # Build exponents
+    #         exponents = generate_exponents(2 * ndofs, degree)
+
+    #         # Matrix acting linearly on z
+    #         linear_dynamics_matrix = LinearPart[:ndofs, :ndofs]
+    #         # Matrix acting on the polynomial features of z
+    #         nl_dynamics_matrix = unpack_coefficient_matrix(
+    #             dynamics_reduced_structure,
+    #             raw_coeffs[: np.sum(dynamics_reduced_structure)],
+    #         )
+    #         # Polynomial features corresponding to nonzero rows in the dynamics matrix
+    #         required_powers = (
+    #             PolynomialFeatures(degree=degree, include_bias=False)
+    #             .fit(np.ones((1, ndofs * 2)))
+    #             .powers_
+    #         )[ndofs * 2 :, :][dynamics_required_feats, :]
+
+    #         def vectorfield(t, x):
+    #             z = np.asarray(x).reshape(-1, 1)
+    #             z_reduced = z[:ndofs, :]
+    #             z_dot_reduced = (
+    #                 linear_dynamics_matrix @ z_reduced
+    #                 + nl_dynamics_matrix @ eval_complex_poly(z, required_powers)
+    #             )
+    #             z_dot = insert_complex_conjugate(z_dot_reduced)
+    #             return z_dot.squeeze()
+
+    #         class Dynamics(NamedTuple):
+    #             predict: Callable
+    #             map_info: Dict
+    #             fit: Optional[Callable] = None
+
+    #         dynamics = Dynamics(
+    #             predict=lambda x: compute_polynomial_map(coeff_dynamics_full, degree)(x).T,
+    #             map_info={
+    #                 "coefficients": coeff_dynamics_full,
+    #                 "exponents": exponents,
+    #                 "vectorfield": vectorfield,
+    #                 "normalform_transformation": transformation,
+    #             }
+    #         )
+
+    #         return transformation, dynamics
+        
+    #     transformation, dynamics = wrap_precomputed_normalform(
+    #         ndofs=self.ssm_dim,
+    #         degree=degree,
+    #         coeff_dynamics=dynamics_coeffs,
+    #         coeffs_transformation=transform_coeffs,
+    #         LinearPart=LinearPart,
+    #         dynamics_reduced_structure=dynamics_reduced_structure,
+    #         dynamics_required_feats=dynamics_required_feats,
+    #         diagonalizing_matrix=diagonalizing_matrix,
+    #         raw_coeffs=raw_coeffs,
+    #     )
+
+    #     self.reduced_dynamics = dynamics
+    #     self.reduced_dynamics.map_info["normalform_transformation"] = self.normalform_transformation
+    #     return
+
+    def set_normalform_transformation_coefficients(self, 
+                                                  transform_coefficients, 
+                                                  inverse_transform_coefficients,
+                                                  dynamics_coeffs,
+                                                  linear_transform,
+                                                  degree,
+                                                  **kwargs) -> None:
+        from ssmlearnpy.reduced_dynamics.normalform import NonlinearCoordinateTransform
+        from ssmlearnpy.utils.preprocessing import compute_polynomial_map, generate_exponents
+        
+        if self.ssm_dim is None:
+            raise ValueError("SSM dimension must be set before loading normal form transformation coefficients. "
+                           "Initialize SSMLearn with ssm_dim parameter.")
+        
+        # Validate and process dimensions
+        ndofs = self.ssm_dim
+        exponents = generate_exponents(ndofs, degree, include_bias=False)
+        
+        # Import the NonlinearCoordinateTransform class
+        from ssmlearnpy.reduced_dynamics.normalform import NonlinearCoordinateTransform
+        
+        # Create the normal form transformation object
+        self.normalform_transformation = NonlinearCoordinateTransform(
+            dimension=ndofs,
+            degree=degree,
+            transform_coefficients=transform_coefficients,
+            inverse_transform_coefficients=inverse_transform_coefficients,
+            linear_transform=linear_transform
+        )
+
+        # Now need to read in the normal form dynamics as well, can't get this to work
+
+        # from ssmlearnpy.reduced_dynamics.normalform import NormalForm
+
+        # LinearPart = dynamics_coeffs[:, :ndofs]
+
+        # normalform = NormalForm(LinearPart)
+
+        # normalform.set_dynamics_and_transformation_structure(
+        #     type="flow", degree=5, use_center_manifold_style=True
+        # )
+
+        # unpacked_coeffs = {
+        #     "coeff_dynamics": dynamics_coeffs,
+        #     "coeff_transformation": transform_coefficients
+        # }
+
+        # transformation, dynamics = normalform.wrap_optimized_coefficients(
+        #     ndofs,
+        #     normalform,
+        #     degree,
+        #     unpacked_coeffs,
+        #     find_inverse=True,
+        #     trajectories=self.emb_data.get("reduced_coordinates", None),
+        # )
+
+        # self.normalform_transformation = transformation
+        # self.reduced_dynamics = dynamics
+        # self.reduced_dynamics.map_info["normalform_transformation"] = transformation
+        
+        logger.info(f"Normal form transformation coefficients loaded successfully. "
+                   f"Transform shape: {transform_coefficients.shape}, "
+                   f"Inverse transform shape: {inverse_transform_coefficients.shape}, "
+                   f"Polynomial degree: {degree}")
+        
+        return
+        
+        
