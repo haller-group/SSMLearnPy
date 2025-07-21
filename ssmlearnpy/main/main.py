@@ -236,7 +236,7 @@ class SSMLearn:
         normalform_args = {'degree': 3, 'do_scaling' : True,
                             'tolerance': None, 'ic_style': 'random', 
                             'max_iter': 1000, 'method': 'lm',
-                              'jac': '2-point'},
+                              'jac': '2-point', 'use_center_manifold_style': True},
         **regression_args
     ) -> None:
         """Compute the reduced dynamics from the data supplied to the class.
