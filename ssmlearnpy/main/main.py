@@ -102,18 +102,29 @@ class SSMLearn:
             self.input_data["observables"] = x
             self.input_data["offset"] = offset
 
+        elif ssm_dim is not None:
+            # Allow initialization without data if ssm_dim is provided
+            # This enables loading of precomputed SSM models
+            logger.info("Initializing SSMLearn without data - precomputed model mode")
+            self.input_data["time"] = None
+            self.input_data["observables"] = None
+            self.input_data["offset"] = offset
+
         else:
             raise RuntimeError(
                 (
-                    f"Not enought parameters specified. Found: path_to_trajectories={path_to_trajectories}"
-                    + f"t={t}, x={x}. Please either set the path to the trajectories file or pass them to the class"
+                    f"Not enough parameters specified. Found: path_to_trajectories={path_to_trajectories}, "
+                    + f"t={t}, x={x}, ssm_dim={ssm_dim}. Please either set the path to the trajectories file, "
+                    + f"pass data (t and x), or provide ssm_dim for precomputed model loading."
                 )
             )
 
-        self.check_inputs()
+        # Only check inputs if we have data
+        if self.input_data["time"] is not None and self.input_data["observables"] is not None:
+            self.check_inputs()        
         self.emb_data = {}
 
-        if derive_embdedding and not reduced_coordinates:
+        if derive_embdedding and not reduced_coordinates and self.input_data["observables"] is not None:
             logger.info("Getting coordinates embeddings")
             self.emb_data = {}
             self.emb_data["time"], self.emb_data["observables"], embedding_info = (
@@ -126,9 +137,14 @@ class SSMLearn:
                 )
             )
             self.emb_data["offset"] = embedding_info["embedded_offset"]
-        else:
+        elif self.input_data["observables"] is not None:
             self.emb_data["time"] = self.input_data["time"]
             self.emb_data["observables"] = self.input_data["observables"]
+            self.emb_data["offset"] = self.input_data["offset"]
+        else:
+            # Initialize empty emb_data for precomputed model mode
+            self.emb_data["time"] = None
+            self.emb_data["observables"] = None
             self.emb_data["offset"] = self.input_data["offset"]
 
         self.emb_data["params"] = params
@@ -504,3 +520,206 @@ class SSMLearn:
             predictions["observables"] = x_predict
             predictions["errors"] = prediction_errors
             return predictions
+
+    def set_reduced_dynamics_coefficients(self, coefficients, exponents=None, ssm_dim=None, **kwargs) -> None:
+        """Set precomputed coefficients for the reduced dynamics.
+        
+        This method allows you to directly set the coefficients of the reduced dynamics 
+        without computing them from data, which is useful when you have precomputed 
+        coefficients from previous runs or other sources.
+        
+        Parameters:
+            coefficients (np.ndarray): Coefficient matrix of shape (n_outputs, n_features),
+                where n_outputs is the dimension of the reduced coordinates and n_features
+                is the number of polynomial features (including linear terms).
+            exponents (np.ndarray, optional): Exponent matrix of shape (n_reduced_dims, n_features)
+                specifying the polynomial structure. If None, it will be generated automatically
+                based on the coefficient matrix size assuming standard polynomial features.
+            ssm_dim (int, optional): Dimension of the SSM. Required if no data/reduced coordinates 
+                are available. If provided, it will override any existing ssm_dim.
+            **kwargs: Additional keyword arguments that will be stored in map_info.
+                
+        Note:
+            This method can work without any data if ssm_dim is provided. If reduced coordinates
+            are available, it will validate consistency with them.
+        """
+        # Determine the SSM dimension
+        if ssm_dim is not None:
+            # Override or set the SSM dimension
+            self.ssm_dim = ssm_dim
+            expected_outputs = ssm_dim
+        elif hasattr(self, 'emb_data') and self.emb_data.get("reduced_coordinates") is not None:
+            # Use existing reduced coordinates to determine dimension
+            expected_outputs = len(self.emb_data["reduced_coordinates"][0])
+        elif hasattr(self, 'ssm_dim') and self.ssm_dim is not None:
+            # Use existing ssm_dim attribute
+            expected_outputs = self.ssm_dim
+        else:
+            # Infer from coefficient matrix
+            expected_outputs = coefficients.shape[0]
+            self.ssm_dim = expected_outputs
+            logger.info(f"Inferred SSM dimension from coefficient matrix: {self.ssm_dim}")
+        
+        # Initialize emb_data if it doesn't exist
+        if not hasattr(self, 'emb_data'):
+            self.emb_data = {
+                "reduced_coordinates": None,
+                "time": None,
+                "observables": None,
+                "params": None,
+                "offset": None
+            }
+        
+        # Import required modules for creating the dynamics object
+        from ssmlearnpy.utils.preprocessing import generate_exponents, compute_polynomial_map
+        
+        # Validate input dimensions
+        n_outputs, n_features = coefficients.shape
+        if n_outputs != expected_outputs:
+            raise ValueError(f"Number of outputs in coefficients ({n_outputs}) must match "
+                           f"expected SSM dimension ({expected_outputs})")
+        
+        # Generate exponents if not provided
+        if exponents is None:
+            # Infer polynomial degree from number of features
+            # For n_dim reduced coordinates, degree d gives: (n_dim + d)! / (n_dim! * d!) features
+            n_dim = expected_outputs
+            degree = 1
+            while True:
+                expected_features = generate_exponents(n_dim, degree, include_bias=False).shape[1]
+                if expected_features == n_features:
+                    break
+                elif expected_features > n_features:
+                    raise ValueError(f"Cannot infer polynomial degree from {n_features} features "
+                                   f"for {n_dim} reduced coordinates. Please provide exponents explicitly.")
+                degree += 1
+            
+            exponents = generate_exponents(n_dim, degree, include_bias=False)
+        else:
+            if exponents.shape[1] != n_features:
+                raise ValueError(f"Number of features in exponents ({exponents.shape[1]}) "
+                               f"must match number of features in coefficients ({n_features})")
+        
+        # Create a dynamics object similar to what get_fit_ridge returns
+        # This mimics the NamedTuple structure used in the normalform module
+        from typing import NamedTuple, Callable, Dict, Optional
+        
+        class Dynamics(NamedTuple):
+            predict: Callable
+            map_info: Dict
+            fit: Optional[Callable] = None
+        
+        # Create polynomial map function
+        inferred_degree = np.max(np.sum(exponents, axis=0))
+        poly_map = compute_polynomial_map(coefficients, 
+                                        degree=inferred_degree, 
+                                        include_bias=False)
+        
+        # Create the dynamics object
+        # Note: compute_polynomial_map expects input of shape (n_features, n_samples)
+        # but sklearn predict functions typically expect (n_samples, n_features)
+        # So we need to transpose appropriately
+        self.reduced_dynamics = Dynamics(
+            predict=lambda x: poly_map(x.T).T if x.ndim == 2 else poly_map(x.reshape(-1, 1)).T,
+            map_info={
+                "coefficients": coefficients,
+                "exponents": exponents,
+                **kwargs  # Include any additional kwargs in map_info
+            }
+        )
+        
+        # Extract linear part and compute eigenvalues/eigenvectors
+        n_linear_features = exponents.shape[0]  # Number of linear features equals reduced dimension
+        linear_part = coefficients[:, :n_linear_features]
+        d, v = np.linalg.eig(linear_part)
+        
+        # Store eigenvalue information
+        self.reduced_dynamics.map_info["eigenvalues_linear_part"] = d
+        self.reduced_dynamics.map_info["eigenvectors_linear_part"] = v
+        self.eigenvalues = d
+        self.eigenvectors = v
+        self.reduced_coords_dynamics = deepcopy(self.reduced_dynamics)
+        
+        return
+
+    def set_decoder_coefficients(self, coefficients, exponents=None, full_dim=None, **kwargs) -> None:
+        """Set precomputed coefficients for the decoder (parametrization).
+        
+        This method allows you to directly set the coefficients of the decoder/parametrization
+        without computing them from data, which is useful when you have precomputed 
+        coefficients from previous runs or other sources.
+        
+        Parameters:
+            coefficients (np.ndarray): Coefficient matrix of shape (n_full_features, n_reduced_features),
+                where n_full_features is the dimension of the full system and n_reduced_features
+                is the number of polynomial features of the reduced coordinates.
+            exponents (np.ndarray, optional): Exponent matrix of shape (n_reduced_dims, n_reduced_features)
+                specifying the polynomial structure. If None, it will be generated automatically.
+            full_dim (int, optional): Dimension of the full system. If not provided, will be 
+                inferred from the coefficient matrix.
+            **kwargs: Additional keyword arguments that will be stored in map_info.
+                
+        Note:
+            This method can work without any data. The SSM dimension should be set either
+            via ssm_dim parameter during initialization or by calling set_reduced_dynamics_coefficients first.
+        """
+        # Determine dimensions
+        n_full_features, n_reduced_features = coefficients.shape
+        
+        if full_dim is not None:
+            expected_full_dim = full_dim
+        else:
+            expected_full_dim = n_full_features
+            
+        if not hasattr(self, 'ssm_dim') or self.ssm_dim is None:
+            raise ValueError("SSM dimension must be set before setting decoder coefficients. "
+                           "Either initialize with ssm_dim or call set_reduced_dynamics_coefficients first.")
+        
+        # Import required modules
+        from ssmlearnpy.utils.preprocessing import generate_exponents, compute_polynomial_map
+        from typing import NamedTuple, Callable, Dict, Optional
+        
+        # Generate exponents if not provided
+        if exponents is None:
+            # Infer polynomial degree from number of features
+            n_dim = self.ssm_dim
+            degree = 1
+            while True:
+                expected_features = generate_exponents(n_dim, degree, include_bias=False).shape[1]
+                if expected_features == n_reduced_features:
+                    break
+                elif expected_features > n_reduced_features:
+                    raise ValueError(f"Cannot infer polynomial degree from {n_reduced_features} features "
+                                   f"for {n_dim} reduced coordinates. Please provide exponents explicitly.")
+                degree += 1
+            
+            exponents = generate_exponents(n_dim, degree, include_bias=False)
+        else:
+            if exponents.shape[1] != n_reduced_features:
+                raise ValueError(f"Number of features in exponents ({exponents.shape[1]}) "
+                               f"must match number of features in coefficients ({n_reduced_features})")
+        
+        # Create a decoder object similar to what get_fit_ridge returns
+        class Decoder(NamedTuple):
+            predict: Callable
+            map_info: Dict
+            fit: Optional[Callable] = None
+        
+        # Create polynomial map function
+        poly_map = compute_polynomial_map(coefficients, 
+                                        degree=np.max(np.sum(exponents, axis=0)), 
+                                        include_bias=False)
+        
+        # Create the decoder object
+        # Note: compute_polynomial_map expects input of shape (n_features, n_samples)
+        # but sklearn predict functions typically expect (n_samples, n_features)
+        self.decoder = Decoder(
+            predict=lambda x: poly_map(x.T).T if x.ndim == 2 else poly_map(x.reshape(-1, 1)).T,
+            map_info={
+                "coefficients": coefficients,
+                "exponents": exponents,
+                **kwargs  # Include any additional kwargs in map_info
+            }
+        )
+        
+        return
