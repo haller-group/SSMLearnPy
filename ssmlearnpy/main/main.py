@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass, field
 import numpy as np
-import pickle
+import dill
 
 from ssmlearnpy.geometry.coordinates_embedding import coordinates_embedding
 from ssmlearnpy.geometry.dimensionality_reduction import (
@@ -32,8 +32,17 @@ from ssmlearnpy.utils.ridge import get_matrix
 from ssmlearnpy.utils.file_handler import get_vectors
 from ssmlearnpy.utils.plots import compute_surface
 from ssmlearnpy.utils.data import SSMData, SSMDataAttribute, prev_attribute_map
-from ssmlearnpy.utils.config import SSMConfig, NormalFormConfig
-from ssmlearnpy.utils.preprocessing import sort_complex_eigenpairs
+from ssmlearnpy.utils.config import (
+    BaseRegressionConfig,
+    GeometryRegressionConfig,
+    SSMConfig,
+    NormalFormConfig,
+    RidgeRegressionConfig,
+)
+from ssmlearnpy.utils.preprocessing import (
+    estimate_ssm_dim,
+    get_optimal_timestep,
+)
 import ssmlearnpy.reduced_dynamics.normalform as normalform
 from scipy.optimize import minimize, least_squares
 from scipy.integrate import solve_ivp
@@ -121,88 +130,148 @@ class SSMLearn:
             self.data.inputs.data = traj
             self.data.inputs.time = time
 
-        # TODO add automatic ssm dimension detection here
-        if self.config.ssm_dim is None:
-            self.config.ssm_dim = 2
+        self.preprocess()
 
-        if self.data.embedded.empty():
-            LOGGER.info("Getting coordinates embeddings")
-            self.data.embedded.time, self.data.embedded.data, _ = coordinates_embedding(
-                self.data.inputs.time,
-                self.data.inputs.data,
-                self.config.ssm_dim,
-                **self.config.coordinates_embeddings_args.model_dump(),
-            )
+        self.embed()
 
     @staticmethod
     def import_data(path) -> tuple[LArr, LArr]:
         x, t = get_vectors(path)
         return x, t
-    
+
     def preprocess(self):
-        """
-        
-        """
+        """ """
         data = self.data
         if self.config.ssm_dim is None:
-            try
-        
+            self.config.ssm_dim = estimate_ssm_dim(data)
 
-    def get_reduced_coordinates(
+        if self.config.coordinates_embeddings_args.shift_steps is None:
+            self.config.coordinates_embeddings_args.shift_steps = get_optimal_timestep(
+                data
+            )
+
+    def embed(self, data: Optional[SSMData] = None) -> SSMData:
+        assign_to_self = False
+        if data is None:
+            data = self.data
+            assign_to_self = True
+        data = self.data if data is None else data
+        assert (
+            len(data.inputs.data) > 0
+        ), "No input data found. Please provide input data."
+
+        assert (
+            self.config.ssm_dim is not None
+        ), "SSM dimension is not set. Please set it in the config or run preprocess() to estimate it."
+        t, embed, _ = coordinates_embedding(
+            data.inputs.time,
+            data.inputs.data,
+            self.config.ssm_dim,
+            **self.config.coordinates_embeddings_args.model_dump(),
+        )
+
+        data.embedded.time = t
+        data.embedded.data = embed
+
+        if assign_to_self:
+            self.data = data
+        return data
+
+    def fit_geometry(
         self,
-        method: Literal["linearchart", "basic", "fastssm"] = "linearchart",
-        **keyargs,
+        method: Literal["linearchart", "basic", "oblique-projection"] = "linearchart",
+        regression_args: Union[
+            BaseRegressionConfig, RidgeRegressionConfig, GeometryRegressionConfig
+        ] = BaseRegressionConfig(),
+    ) -> None:
+
+        if method == "linearchart":
+            # This method ensures that the linear chart used for projection is also
+            # used by the encoder
+
+            if isinstance(regression_args, BaseRegressionConfig):
+                regression_args = GeometryRegressionConfig.from_shared_args(
+                    regression_args
+                )
+
+            assert isinstance(
+                regression_args, GeometryRegressionConfig
+            ), "regression_args must be of type GeometryRegressionConfig when using LinearChart"
+
+            self.encoder, self.decoder = fit_reduced_coords_and_parametrization(
+                self.data.embedded.data,
+                n_dim=self.config.ssm_dim,
+                **regression_args.model_dump(),
+            )
+        else:
+
+            if isinstance(regression_args, BaseRegressionConfig):
+                regression_args = RidgeRegressionConfig.from_shared_args(
+                    regression_args
+                )
+
+            assert isinstance(
+                regression_args, RidgeRegressionConfig
+            ), "regression_args must be of type RidgeRegressionConfig when using BasicReducer or ObliqueProjection"
+
+            self.fit_encoder(method=method)
+            self.fit_decoder(regression_args)
+
+    def fit_encoder(
+        self,
+        method: Literal["linearchart", "basic", "oblique-projection"] = "linearchart",
     ) -> None:
         """
         Compute the reduced coordinates of the trajectories using the given method.
-        method: can be 'basic', 'linearchart' or 'fastssm'.
+        method: can be 'basic', 'linearchart' or 'oblique-projection'.
             basic: use the first ssm_dim coordinates of the delay-embedded trajectories
             linearchart: perform an SVD and keep the first ssm_dim coordinates
-            fastssm: same as linearchart. We keep the name fastssm to be consistent with the matlab implementation
+            oblique-projection: fit the optimal oblique projection matrix and use it to compute the reduced coordinates.
         If the reduced coordinates have already been computed, skip.
         """
-        self.encoder = reduce_dimensions(
-            method=method, n_dim=self.config.ssm_dim, **keyargs
-        )
-        assert self.data.embedded.data, "No embedded signal found."
+        assert self.config.ssm_dim is not None, "SSM dimension is not set."
 
-        # TODO is this behaviour desired? Maybe make recalculating the default behaviour
-        if not self.data.reduced_coordinates.data:
-            self.data.reduced_coordinates.clear()
-            self.encoder.fit(self.data.embedded.data)
-            self.data.reduced_coordinates.data = self.encoder.predict(
-                self.data.embedded.data
+        training_data = self.data
+
+        if method == "oblique-projection":
+            training_data, embedding_config = preprocess_for_oblique_projection(
+                self.data, self.config
+            )
+            t, embed, _ = coordinates_embedding(
+                training_data.embedded.time,
+                training_data.embedded.data,
+                self.config.ssm_dim,
+                **embedding_config.model_dump(),
+            )
+            self.data.embedded.time = t
+            self.data.embedded.data = embed
+
+        self.encoder = reduce_dimensions(
+            method=method,
+            n_dim=self.config.ssm_dim,
+        )
+        assert training_data.embedded.data, "No embedded signal found."
+
+        self.data.reduced_coordinates.clear()
+        self.encoder.fit(training_data.embedded)
+        self.data.reduced_coordinates.data = self.encoder.predict(self.data.embedded)
+
+    def fit_decoder(
+        self, regression_args: RidgeRegressionConfig = RidgeRegressionConfig()
+    ) -> None:
+        if self.params:
+            self.decoder = get_fit_ridge_parametric(
+                self.data.reduced_coordinates.data,
+                self.data.embedded.data,
+                self.params,
+                **regression_args.model_dump(),
             )
         else:
-            LOGGER.info("Reduced coordinates already calculated, skipping.")
-
-    def get_parametrization(self, **regression_args) -> None:
-        if (
-            self.data.reduced_coordinates.data
-        ):  # reduced coordinates have been precomputed
-            if self.params:
-                self.decoder = get_fit_ridge_parametric(
-                    self.data.reduced_coordinates.data,
-                    self.data.embedded.data,
-                    self.params,
-                    **regression_args,
-                )
-            else:
-                self.decoder = get_fit_ridge(
-                    self.data.reduced_coordinates.data,
-                    self.data.embedded.data,
-                    **regression_args,
-                )
-        else:
-            self.encoder, self.decoder = fit_reduced_coords_and_parametrization(
+            self.decoder = get_fit_ridge(
+                self.data.reduced_coordinates.data,
                 self.data.embedded.data,
-                self.config.ssm_dim,
-                **regression_args,
-            )  # get both decoder and encoder
-            self.data.reduced_coordinates.data = [
-                self.encoder.predict(trajectory)
-                for trajectory in self.data.embedded.data
-            ]
+                **regression_args.model_dump(),
+            )
 
     def encode(self, x):
         """wrapper for encoder.predict. Expects a trajectory of shape (n_features, n_samples)
@@ -210,7 +279,7 @@ class SSMLearn:
         """
         assert (
             self.encoder is not None
-        ), "Encoder not fitted. Please call get_reduced_coordinates() first."
+        ), "Encoder not fitted. Please call fit_encoder() first."
         if isinstance(x, list):
             return [self.encoder.predict(_x) for _x in x]
         elif isinstance(x, np.ndarray):
@@ -254,11 +323,12 @@ class SSMLearn:
 
         return surface_dict
 
-    def get_reduced_dynamics(
+    def fit_reduced_dynamics(
         self,
-        normalform_args: Optional[Dict] = None,
+        data: Optional[SSMData] = None,
+        normalform_args: Optional[NormalFormConfig] = None,
         recalculate_polynomial_dynamics=False,
-        **regression_args,
+        regression_args: RidgeRegressionConfig = RidgeRegressionConfig(),
     ) -> None:
         """Compute the reduced dynamics from the data supplied to the class.
 
@@ -275,18 +345,23 @@ class SSMLearn:
                 - normalform_args['use_center_manifold_style']: if True, then the center manifold style is used to compute the normal form transformation.
         """
 
+        if data is None:
+            data = self.data
+
         if self.reduced_dynamics is None or recalculate_polynomial_dynamics:
             X, y = shift_or_differentiate(
-                self.data.reduced_coordinates.data,
-                self.data.embedded.time,
+                data.reduced_coordinates.data,
+                data.embedded.time,
                 self.config.dynamics_type,
             )
             if self.params:
                 self.reduced_dynamics = get_fit_ridge_parametric(
-                    X, y, self.params, **regression_args
+                    X, y, self.params, **regression_args.model_dump()
                 )
             else:
-                self.reduced_dynamics = get_fit_ridge(X, y, **regression_args)
+                self.reduced_dynamics = get_fit_ridge(
+                    X, y, **regression_args.model_dump()
+                )
 
             linear_part = self.reduced_dynamics.map_info["coefficients"][
                 :, : X[0].shape[0]
@@ -305,9 +380,7 @@ class SSMLearn:
         ):  # compute the normal form transformation after an initial guess has been computed
 
             if normalform_args is not None:
-                self.config.normalform_args = NormalFormConfig.model_validate(
-                    normalform_args
-                )
+                self.config.normalform_args = normalform_args
 
             ndofs = int(self.linear_part.shape[0] / 2)
             if self.config.ssm_dim % 2 != 0:
@@ -320,8 +393,8 @@ class SSMLearn:
                 n_unknowns_transformation,
                 objective,
             ) = normalform.create_normalform_transform_objective_optimized(
-                self.data.embedded.time,
-                self.data.reduced_coordinates.data,
+                data.embedded.time,
+                data.reduced_coordinates.data,
                 self.linear_part,
                 degree=self.config.normalform_args.degree,
                 do_scaling=self.config.normalform_args.do_scaling,
@@ -425,8 +498,62 @@ class SSMLearn:
 
         return data
 
+    def predict_normalform_reduced_dynamics(
+        self,
+        data: Optional[SSMData] = None,
+    ) -> SSMData:
+
+        assign_to_self = False
+        if data is None:
+            data = self.data
+            assign_to_self = True
+
+        assert data.reduced_coordinates.data, "No reduced coordinates found."
+
+        data.normal_coordinates.data = self.normalform_transformation.inverse_transform(
+            data.reduced_coordinates.data
+        )
+
+        data.advected_normal_coordinates.data = []
+        for t, normal_form in zip(
+            data.embedded.time,
+            data.normal_coordinates.data,
+        ):
+            try:
+
+                data.advected_normal_coordinates.data.append(
+                    solve_ivp(
+                        self.reduced_dynamics.map_info["vectorfield"],
+                        [t[0], t[-1]],
+                        normal_form[:, 0],
+                        t_eval=t,
+                        method="DOP853",
+                    ).y
+                )
+                data.advected_normal_coordinates.time.append(t)
+            except Exception as e:
+                LOGGER.warning(f"Integration failed when advecting trajectory")
+                raise (e)
+
+        data.advected_normal_coordinates.reconstructed_prev = [
+            traj.real
+            for traj in self.normalform_transformation.transform(
+                data.advected_normal_coordinates.data
+            )
+        ]
+
+        data.advected_normal_coordinates.reconstructed_embedding = self.decode(
+            data.advected_normal_coordinates.reconstructed_prev
+        )
+
+        # TODO also calculate prediction errors
+
+        if assign_to_self:
+            self.data = data
+        return data
+
     def predict_polynomial_reduced_dynamics(
-        self, data: Optional[SSMData] = None, use_polynomial=False
+        self, data: Optional[SSMData] = None
     ) -> SSMData:
 
         assign_to_self = False
@@ -468,11 +595,14 @@ class SSMLearn:
         else:
             return self.fit_optimal_polynomial(data)
 
-    def fit_optimal_normalform(
-        self, data: Optional[SSMData] = None, min_order: int = 3, max_order: int = 10
-    ):
-
+    def fit_optimal_normalform(self, data: Optional[SSMData] = None):
         _data = self.data if data is None else data
+        # Fit linear part
+        self.fit_reduced_dynamics(
+            recalculate_polynomial_dynamics=True,
+            regression_args=RidgeRegressionConfig(poly_degree=2),
+        )
+
         self.data = None
         _ssm = deepcopy(self)
         _config = deepcopy(self.config)
@@ -483,58 +613,70 @@ class SSMLearn:
         processed_orders = []
         models: List[SSMLearn] = []
 
-        for order in range(min_order, max_order + 1):
+        for order in range(
+            self.config.dynamics_polynomial_range[0],
+            self.config.dynamics_polynomial_range[1] + 1,
+        ):
             LOGGER.info(f"Fitting normal form dynamics for order {order}")
             start_time = time()
             _config.normalform_args.degree = order
             _ssm.data = _data
             _ssm.config = _config
 
-            _ssm.get_reduced_dynamics()
+            _ssm.fit_reduced_dynamics()
 
-            _ssm.data.normal_coordinates.data = (
-                _ssm.normalform_transformation.inverse_transform(
-                    _ssm.data.reduced_coordinates.data
+            try:
+                _ssm.predict_normalform_reduced_dynamics()
+            except Exception as e:
+                LOGGER.warning(
+                    f"Normal form dynamics optimisation for order {order} failed with error: {e}"
                 )
-            )
-
-            error_processing_traj = False
-            _ssm.data.advected_normal_coordinates.data = []
-            for t, normal_form in zip(
-                _ssm.data.embedded.time,
-                _ssm.data.normal_coordinates.data,
-            ):
-                try:
-                    if error_processing_traj:
-                        break
-                    _ssm.data.advected_normal_coordinates.data.append(
-                        solve_ivp(
-                            _ssm.reduced_dynamics.map_info["vectorfield"],
-                            [t[0], t[-1]],
-                            normal_form[:, 0],
-                            t_eval=t,
-                            method="DOP853",
-                        ).y
-                    )
-                except Exception as e:
-                    LOGGER.warning(
-                        f"Normal form dynamics optimisation for order {order} failed with error: {e}"
-                    )
-                    error_processing_traj = True
-
-            if error_processing_traj:
                 continue
 
-            _ssm.data.advected_normal_coordinates.reconstructed_prev = [
-                traj.real
-                for traj in _ssm.normalform_transformation.transform(
-                    _ssm.data.advected_normal_coordinates.data
-                )
-            ]
+            # _ssm.data.normal_coordinates.data = (
+            #     _ssm.normalform_transformation.inverse_transform(
+            #         _ssm.data.reduced_coordinates.data
+            #     )
+            # )
 
-            _ssm.data.advected_normal_coordinates.reconstructed_embedding = _ssm.decode(
-                _ssm.data.advected_normal_coordinates.reconstructed_prev
-            )
+            # error_processing_traj = False
+            # _ssm.data.advected_normal_coordinates.data = []
+            # for t, normal_form in zip(
+            #     _ssm.data.embedded.time,
+            #     _ssm.data.normal_coordinates.data,
+            # ):
+            #     try:
+            #         if error_processing_traj:
+            #             break
+
+            #         _ssm.data.advected_normal_coordinates.data.append(
+            #             solve_ivp(
+            #                 _ssm.reduced_dynamics.map_info["vectorfield"],
+            #                 [t[0], t[-1]],
+            #                 normal_form[:, 0],
+            #                 t_eval=t,
+            #                 method="DOP853",
+            #             ).y
+            #         )
+            #     except Exception as e:
+            #         LOGGER.warning(
+            #             f"Normal form dynamics optimisation for order {order} failed with error: {e}"
+            #         )
+            #         error_processing_traj = True
+
+            # if error_processing_traj:
+            #     continue
+
+            # _ssm.data.advected_normal_coordinates.reconstructed_prev = [
+            #     traj.real
+            #     for traj in _ssm.normalform_transformation.transform(
+            #         _ssm.data.advected_normal_coordinates.data
+            #     )
+            # ]
+
+            # _ssm.data.advected_normal_coordinates.reconstructed_embedding = _ssm.decode(
+            #     _ssm.data.advected_normal_coordinates.reconstructed_prev
+            # )
 
             errors.append(
                 np.mean(
@@ -574,9 +716,7 @@ class SSMLearn:
         self.update(optimal_model)
         return processed_orders, errors
 
-    def fit_optimal_polynomial(
-        self, data: Optional[SSMData] = None, min_order: int = 3, max_order: int = 12
-    ):
+    def fit_optimal_polynomial(self, data: Optional[SSMData] = None):
 
         _data = self.data if data is None else data
         self.data = None
@@ -589,14 +729,20 @@ class SSMLearn:
         models = []
         processed_orders = []
 
-        for order in range(min_order, max_order + 1):
+        for order in range(
+            self.config.dynamics_polynomial_range[0],
+            self.config.dynamics_polynomial_range[1] + 1,
+        ):
             start_time = time()
             _config.dynamics_poly_degree = order
             _ssm.data = _data
             _ssm.config = _config
             try:
-                _ssm.get_reduced_dynamics(
-                    recalculate_polynomial_dynamics=True, poly_degree=order
+                _ssm.fit_reduced_dynamics(
+                    recalculate_polynomial_dynamics=True,
+                    regression_args=RidgeRegressionConfig(
+                        poly_degree=order,
+                    ),
                 )
                 _ssm.predict_polynomial_reduced_dynamics()
             except Exception as e:
@@ -628,7 +774,6 @@ class SSMLearn:
             )
 
             # TODO save intermediate model if desired
-
             # Optimal model is considered to be the simplest (lowest order) model
             # that has a reconstruction error below the threshold.
             if errors[-1] < _config.reconstruction_error_threshold:
@@ -657,7 +802,14 @@ class SSMLearn:
         """
         Assume that only the input data is given, then run through the rest of the pipline.
         """
-        pass
+        data = self.embed(data)
+        data = self.predict_geometry(data)
+        if self.is_oscillatory():
+            data = self.predict_polynomial_reduced_dynamics(data)
+        else:
+            data = self.predict_normalform_reduced_dynamics(data)
+
+        return data
 
     def fit(self, data: Optional[SSMData] = None):
         if data is None:
@@ -668,13 +820,22 @@ class SSMLearn:
 
         # Computes the mapping from the embedded phase space to the reduced coordinates
         # on the invariant manifold.
-        self.get_parametrization(poly_degree=self.config.geometry_poly_degree)
+        self.fit_geometry(
+            regression_args=BaseRegressionConfig(
+                poly_degree=self.config.geometry_poly_degree
+            )
+        )
+
+        data = self.predict_geometry(data)
 
         # Computes the dynamics on the manifold.
         # Computes both the polynomial dynamics and, if oscillatory,
         # the normal form dynamics.
-        self.get_reduced_dynamics(
-            poly_degree=self.config.dynamics_poly_degree,
+        self.fit_reduced_dynamics(
+            data=data,
+            regression_args=RidgeRegressionConfig(
+                poly_degree=self.config.dynamics_poly_degree
+            ),
             recalculate_polynomial_dynamics=True,
         )
 
@@ -700,7 +861,7 @@ class SSMLearn:
             self.data = None
 
         with open(path, "wb") as f:
-            pickle.dump(self, f)
+            dill.dump(self, f)
 
         if model_only:
             self.data = data
@@ -711,7 +872,7 @@ class SSMLearn:
         Load the SSMLearn object from a file.
         """
         with open(path, "rb") as f:
-            ssm = pickle.load(f)
+            ssm = dill.load(f)
 
         if not isinstance(ssm, SSMLearn):
             raise TypeError(

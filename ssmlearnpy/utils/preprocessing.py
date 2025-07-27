@@ -1,6 +1,10 @@
 import ipdb.stdout
 from sklearn.preprocessing import PolynomialFeatures
+from sklearn.metrics import mutual_info_score
 import numpy as np
+from ssmlearnpy.utils.data import SSMData
+from ssmlearnpy.geometry.oblique_projection import pffk
+from ssmlearnpy.geometry.coordinates_embedding import coordinates_embedding
 
 
 class PolynomialFeaturesWithPattern(PolynomialFeatures):
@@ -71,7 +75,9 @@ def complex_polynomial_features(
 
 
 def get_matrix(l: list):
-    return np.concatenate(l, axis=1)
+    if len(l[0].shape) > 1:
+        return np.concatenate(l, axis=1)
+    return np.stack(l, axis=0)
 
 
 def generate_exponents(n_features, degree, include_bias=False):
@@ -164,7 +170,7 @@ def sort_complex_eigenpairs(d_unsorted, v_unsorted):
             continue
         first_half_indices.append(i)
         used.add(i)
-        # find its conjugate. Loop starts from the start, because we might have skipped lambda with <0 freq. 
+        # find its conjugate. Loop starts from the start, because we might have skipped lambda with <0 freq.
         conj_val = np.conj(val)
         for j in range(len(d)):
             if j not in used and np.isclose(d[j], conj_val, atol=1e-10):
@@ -179,4 +185,159 @@ def sort_complex_eigenpairs(d_unsorted, v_unsorted):
     v_sorted = np.hstack((v[:, first_half_indices], v[:,second_half_indices]))
     return d_sorted, v_sorted
 
-    
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import stft
+from scipy.ndimage import gaussian_filter1d
+import ipdb
+from scipy.signal import find_peaks
+from collections import Counter
+from ssmlearnpy.utils.data import SSMData
+
+
+def estimate_ssm_dim(data: SSMData):
+    # Estimate the ssm_dim from the longest trajectory and the signal channel with the largest oscillations
+    # TODO this may not be optimal, could consider calculating for multiple trajectories and channels and
+    # checking for consensus
+    traj_idx = np.argmax([len(traj) for traj in data.inputs.data])
+    traj = data.inputs.data[traj_idx]
+    channel = np.argmax(np.std(traj, axis=1))
+
+    # Check whether the signal is long enough to get a meaningful STFT
+    amp, freq_peaks, peak_times = pffk(data.inputs.time[traj_idx], traj[channel])
+
+    if len(freq_peaks) < 25:
+        # 25 periods allows for 10 windows of 5 periods each with 50% overlap between windows
+        raise ValueError(
+            "Not enough periods detected in the signal to conduct frequency analysis and detect ssm_dim. Please manually"
+            "set the ssm_dim in the config or provide a longer signal."
+        )
+
+    enduring_freqs = estimate_enduring_frequencies(
+        traj[channel],
+        nperseg=len(traj[channel]) // 5,
+    )
+    return len(enduring_freqs)
+
+
+def estimate_enduring_frequencies(
+    signal,
+    nperseg=256,
+    plot=False,
+):
+    """
+    Estimate enduring dominant frequencies, robust to frequency drift.
+
+    Parameters:
+    - signal: 1D numpy array, time-domain signal
+    - nperseg: Segment length for STFT
+
+    Returns:
+    - enduring_freqs: List of dominant frequency band centers
+    """
+    f, t, Zxx = stft(signal, nperseg=nperseg)
+    magnitude = np.abs(Zxx)
+
+    # Analyze only the second half of the signal to avoid transients
+    half_idx = magnitude.shape[1] // 2
+    mag_second_half = magnitude[:, half_idx:]
+
+    # Find peaks in each time window
+    peak_counts = []
+    peak_locs_per_window = []
+    threshold = 0.1
+
+    for i in range(mag_second_half.shape[1]):
+        col = mag_second_half[:, i]
+        peaks, props = find_peaks(col, height=threshold)
+        peak_counts.append(len(peaks))
+        peak_locs_per_window.append(peaks)
+
+    # Determine the most common number of peaks
+    if peak_counts:
+        enduring_peak_count = Counter(peak_counts).most_common(1)[0][0]
+    else:
+        enduring_peak_count = 0
+
+    # For each window, get the peak frequencies
+    # Collect all peak frequencies from windows with the enduring_peak_count
+    all_peak_freqs = []
+    for peaks, count in zip(peak_locs_per_window, peak_counts):
+        if count == enduring_peak_count:
+            all_peak_freqs.extend(f[peaks])
+
+    # Cluster the frequencies to find enduring frequency bands
+    if all_peak_freqs:
+        enduring_freqs, _ = np.histogram(all_peak_freqs, bins=enduring_peak_count)
+        bin_edges = np.histogram_bin_edges(all_peak_freqs, bins=enduring_peak_count)
+        enduring_freqs = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    else:
+        enduring_freqs = np.array([])
+
+    if plot:
+        plt.figure(figsize=(10, 6))
+        plt.pcolormesh(t, f, magnitude, shading="gouraud")
+        for freq in enduring_freqs:
+            plt.axhline(freq, color="r", linestyle="--", label=f"{freq:.1f} Hz")
+        plt.title("STFT Magnitude with Enduring Frequency Bands")
+        plt.xlabel("Time [sec]")
+        plt.ylabel("Frequency [Hz]")
+        plt.legend()
+        plt.colorbar(label="Magnitude")
+        plt.tight_layout()
+        plt.show()
+
+    return enduring_freqs.tolist()
+
+
+def get_optimal_timestep(
+    data: SSMData,
+):
+
+    def average_mutual_information(traj, t, max_lag=50):
+        """Compute AMI for a time series up to max_lag."""
+        signal_length = traj.shape[1]
+        ami = np.zeros(max_lag)
+
+        for lag in range(1, max_lag + 1):
+            _, embed, _ = coordinates_embedding(
+                t=[t],
+                x=[traj],
+                imdim=2,
+                shift_steps=lag,
+            )
+
+            embed = embed[0]
+
+            original_signal = embed[0]
+            mi_vals = []
+            # Loop over channels
+            for i in range(1, embed.shape[0]):
+                delayed = embed[i]
+                # Estimate AMI using histogram-based method
+                bins = int(np.sqrt(signal_length - lag))  # Rule of thumb for bin count
+                c_xy = np.histogram2d(original_signal, delayed, bins)[0]
+                mi_vals.append(mutual_info_score(None, None, contingency=c_xy))
+            # Average mutual information across channels
+            ami[lag - 1] = np.mean(mi_vals)
+
+        return ami
+
+    traj_idx = np.argmax([traj.shape[1] for traj in data.inputs.data])
+    traj = data.inputs.data[traj_idx]
+    time = data.inputs.time[traj_idx]
+    channel = np.argmax(np.std(traj, axis=1))
+
+    amp, freq_peaks, peak_times = pffk(data.inputs.time[traj_idx], traj[channel])
+
+    # Estimate the period_length as the length of the signal divided by the number of peaks
+    period_length = traj.shape[1] // len(peak_times)
+
+    ami = average_mutual_information(traj=traj, t=time, max_lag=period_length)
+    optimal_timestep = np.argmin(ami) + 1
+
+    # TODO ami works except when it destroys the transient behaviour
+    if optimal_timestep > period_length // 2:
+        optimal_timestep = max(1, period_length // 10)
+    return optimal_timestep

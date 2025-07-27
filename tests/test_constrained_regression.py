@@ -24,7 +24,9 @@ def test_constrained_regression():
     
     yy = yy.reshape(-1,1)
     mdl = ridge.get_fit_ridge(x.T, yy.T, poly_degree=5, constraints=[[[1., 1., 1. ]], [[0.]]])
-    assert(np.allclose(mdl.predict(x), yy, atol=1e-6))
+    pred = mdl.predict(x)
+    assert(np.allclose(pred, yy.squeeze(), atol=1e-6))
+
 
 def test_compute_polynomial_map():
     # Test compute_polynomial_map

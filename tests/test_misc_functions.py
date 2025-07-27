@@ -218,7 +218,7 @@ def test_get_fit_ridge_parametric():
         XX = np.vstack((Xs[i], r*np.ones((1, Xs[0].shape[1]))))
         yy = mdl.predict(XX.T)
         #print(np.max(np.abs(yy - Zs[i].T)))
-        assert np.allclose(yy, Zs[i].T)
+        assert np.allclose(yy, Zs[i].T.squeeze())
     #     plt.figure()
     #     plt.plot(Zs[i].T, Zs[i].T, '-')
     #     plt.plot(Zs[i].T, yy, '.')
@@ -345,3 +345,4 @@ if __name__ == '__main__':
     test_polynomial_features_pattern()
     test_fit_reduced_coords_and_parametrization()
     test_get_fit_ridge_parametric()
+

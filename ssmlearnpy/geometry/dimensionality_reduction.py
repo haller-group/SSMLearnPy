@@ -1,14 +1,20 @@
 import numpy as np
 from ssmlearnpy.utils.preprocessing import get_matrix
+from ssmlearnpy.geometry.oblique_projection import oblique_projection
+from ssmlearnpy.utils.data import SSMData, SSMDataAttribute
+from ssmlearnpy.utils.config import SSMConfig
+from typing import Optional, Union
 
 
-def reduce_dimensions(method, **keyargs):
+def reduce_dimensions(method, n_dim: int):
     if method == "basic":
-        return BasicReducer(**keyargs)
-    if method == "fastssm":
-        return BasicReducer(**keyargs)
+        return BasicReducer(n_dim=n_dim)
+    # if method == "fastssm":
+    #     return BasicReducer(n_dim=n_dim)
     if method == "linearchart":
-        return LinearChart(**keyargs)
+        return LinearChart(n_dim=n_dim)
+    if method == "oblique_projection":
+        return ObliqueProjection(n_dim=n_dim)
     else:
         raise NotImplementedError(
             (
@@ -25,48 +31,64 @@ class BasicReducer:
     ) -> None:
         self.n_dim = n_dim
 
-    def fit(self, data, offset=None):
-        if offset is not None:
-            raise NotImplementedError("Offset not implemented for BasicReducer")
+    def fit(self, data: SSMDataAttribute):
         pass
 
-    def predict(self, data):
-        return [data_i[: self.n_dim, :] for data_i in data]
+    def predict(self, data: SSMDataAttribute):
+        return [data_i[: self.n_dim, :] for data_i in data.data]
 
 
 class LinearChart:
     def __init__(self, n_dim, matrix_representation=None) -> None:
         self.n_dim = n_dim
         self.matrix_representation = matrix_representation
-        self.offset = None
 
-    def fit(self, data, offset=None):
-        # If the data is given as a matrix, the fixed point is assumed to be at the origin
-        if self.matrix_representation is not None:
-            pass
-        if isinstance(data, list):
-            if offset is not None:
-                self.offset = offset
-            data = get_matrix(data)
+    def fit(self, data: Union[SSMDataAttribute, np.ndarray]):
+
+        if isinstance(data, SSMDataAttribute):
+            _data = get_matrix(data.data)
+        elif isinstance(data, np.ndarray):
+            _data = data
+        else:
+            raise TypeError(
+                (
+                    "Data must be of type SSMDataAttribute or np.ndarray, "
+                    f"got {type(data)} instead"
+                )
+            )
 
         # Centre the data for PCA
-        centred_data = data - np.mean(data, axis=1)[:, None]
+        centred_data = _data - np.mean(_data, axis=1)[:, None]
         U, s, v = np.linalg.svd(centred_data, full_matrices=False)
         self.matrix_representation = U[:, : self.n_dim]
-        return
 
-    def predict(self, data):
+    def predict(self, data: Union[SSMDataAttribute, np.ndarray]):
         if self.matrix_representation is None:
             raise RuntimeError(
                 (
                     "No projection set for LinearChart. Provide a matrix representation or call .fit() first"
                 )
             )
-        if isinstance(
-            data, list
-        ):  # want this to work for a single datamatrix and for a list of trajectories
-            if self.offset is not None:
-                data = [d - self.offset.reshape(-1, 1) for d in data]
-            return [np.matmul(self.matrix_representation.T, data_i) for data_i in data]
-        else:
+
+        if isinstance(data, np.ndarray):
             return np.matmul(self.matrix_representation.T, data)
+
+        return [np.matmul(self.matrix_representation.T, data_i) for data_i in data.data]
+
+
+class ObliqueProjection:
+    def __init__(self, n_dim, matrix_representation=None) -> None:
+        self.n_dim = n_dim
+        self.matrix_representation = matrix_representation
+
+    def fit(self, data: SSMDataAttribute):
+        self.matrix_representation = oblique_projection(data)
+
+    def predict(self, data: SSMDataAttribute):
+        if self.matrix_representation is None:
+            raise RuntimeError(
+                (
+                    "No projection set for ObliqueProjection. Provide a matrix representation or call .fit() first"
+                )
+            )
+        return [np.matmul(self.matrix_representation.T, data_i) for data_i in data.data]

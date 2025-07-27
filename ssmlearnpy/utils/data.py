@@ -2,6 +2,7 @@ from typing import Optional, List
 from dataclasses import dataclass, field
 from numpy import ndarray
 from ssmlearnpy import LArr
+import numpy as np
 
 prev_attribute_map = {
     "reduced_coordinates": "embedded",
@@ -43,20 +44,20 @@ class SSMDataAttribute:
         self.cumulative_errors = []
         self.time = []
 
-    # def validate(self):
-    #     assert (
-    #         len(self.data) == len(self.immediate_errors) == len(self.cumulative_errors)
-    #     ), (
-    #         f"Predictions, immediate errors, and cumulative errors must have the same number of trajectories. "
-    #         f"Found {len(self.data)} predictions, {len(self.immediate_errors)} immediate errors, and {len(self.cumulative_errors)} cumulative errors."
-    #     )
-    #     for p, ie, ce in zip(self.data, self.immediate_errors, self.cumulative_errors):
-    #         assert len(p) == len(ie) == len(ce), (
-    #             f"Each trajectory in predictions, immediate errors, and cumulative errors must have the same length. "
-    #             f"Found lengths {len(p)}, {len(ie)}, and {len(ce)} respectively."
-    #         )
+    def get_data_matrix(self):
+        """
+        Convert the list of signals in the data attribute to a single matrix
+        """
 
-    # TODO possibly verify dimensions
+        if len(self.data) == 0:
+            return None
+
+        return np.concatenate([np.array(d).reshape(1, -1) for d in self.data], axis=1)
+    
+    def validate(self):
+        if self.time:
+            for traj in self.time:
+                assert len(traj.shape) == 1, "Time should be a 1D array."
 
 
 @dataclass
@@ -72,6 +73,9 @@ class SSMData:
     """
 
     inputs: SSMDataAttribute = field(default_factory=SSMDataAttribute)
+
+    # Only used if oblique_projection is selected
+    # linear_regime: SSMDataAttribute = field(default_factory=SSMDataAttribute)
 
     embedded: SSMDataAttribute = field(default_factory=SSMDataAttribute)
 
@@ -102,37 +106,15 @@ class SSMData:
         """
         Validate the data in the SSMData object.
         """
+        for attr in self.__dataclass_fields__:
+            if attr != "regression_params":
+                assert isinstance(
+                    getattr(self, attr), SSMDataAttribute
+                ), f"SSMData attribute '{attr}' must be of type SSMDataAttribute."
+                getattr(self, attr).validate()
 
-        # if self.input_signal:
-        #     assert self.time, "Time data must be provided if input_signal is provided."
-        #     assert len(self.time) == len(
-        #         self.input_signal
-        #     ), f"Found {len(self.time)} time trajectories but {len(self.input_signal)} signal trajectories."
-        #     for t, x in zip(self.time, self.input_signal):
-        #         assert len(t) == len(
-        #             x
-        #         ), f"Time vector and signal vector must have the same length. Found {len(t)} and {len(x)}."
-
-        # if self.embedded_signal:
-        #     assert (
-        #         self.clipped_time
-        #     ), "Clipped time data must be provided if embedded_signal is provided."
-        #     assert len(self.clipped_time) == len(
-        #         self.embedded_signal
-        #     ), f"Found {len(self.clipped_time)} clipped time trajectories but {len(self.embedded_signal)} embedded signal trajectories."
-        #     for t, x in zip(self.clipped_time, self.embedded_signal):
-        #         assert len(t) == len(
-        #             x
-        #         ), f"Clipped time vector and embedded signal vector must have the same length. Found {len(t)} and {len(x)}."
-
-        # for attr in [
-        #     "reduced_coordinates",
-        #     "reconstructed_reduced_coordinates",
-        #     "normal_coordinates",
-        #     "reconstructed_normal_coordinates",
-        # ]:
-        #     if getattr(self, attr) is not None:
-        #         assert isinstance(
-        #             getattr(self, attr), SSMDataAttribute
-        #         ), f"{attr} must be an instance of SSMDataAttribute."
-        #         getattr(self, attr).validate()
+            if attr == "inputs":
+                if getattr(self, attr).data:
+                    for traj in getattr(self, attr).data:
+                        assert(len(traj.shape)==2), "Input signal must be a 2D array"
+                        assert(traj.shape[0]<traj.shape[1]), "Shape must be like (signal_dim, signal_length)"

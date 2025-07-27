@@ -6,12 +6,11 @@ import numpy as np
 from scipy.signal import butter, filtfilt, find_peaks
 from scipy.interpolate import interp1d
 import warnings
-from typing import List, Tuple
+from typing import Optional
 import matplotlib.pyplot as plt
 import scipy.signal as signal
 import polars as pl
 import ipdb
-from logic.ssm_new import get_optimal_timestep
 from ssmlearnpy.geometry.coordinates_embedding import coordinates_embedding
 from sklearn.decomposition import TruncatedSVD
 from scipy.optimize import minimize
@@ -19,6 +18,8 @@ import numba
 from numba.extending import register_jitable
 import nlopt
 import time
+from ssmlearnpy.utils.data import SSMData, SSMDataAttribute
+from ssmlearnpy.utils.config import SSMConfig, CoordinatesEmbeddingConfig
 
 
 # @register_jitable(numba.types.Array(numba.types.float64, 1, "C"), numba.types.int64)
@@ -172,90 +173,6 @@ def pffk(t: np.ndarray, x: np.ndarray, plot=False):
     return amp, freq_peaks, peak_times
 
 
-def frequency_analysis(
-    x: np.ndarray,
-    t: np.ndarray,
-    num_windows: int = 10,
-    epsilon: float = 0.1,
-    min_peak_distance: int = 10,
-    plot: bool = False,
-) -> Tuple[np.ndarray, np.ndarray, List[np.ndarray]]:
-    """
-    Pythonic version of MATLAB spectrogram analysis with peak detection
-
-    Args:
-        x: Input signal (1D array)
-        t: Time vector (1D array)
-        nwin: Window size for STFT
-        epsilon: Relative threshold for peak detection (0-1)
-        min_peak_distance: Minimum samples between peaks
-        plot: Whether to generate plots
-
-    Returns:
-        stft: Short-time Fourier transform (2D array)
-        frequencies: Frequency vector (1D array)
-        dominant_freqs: List of dominant frequencies at each time point
-    """
-    x = x.squeeze()
-    window_length = int(len(x) / num_windows)
-    # Compute STFT (similar to MATLAB's spectrogram)
-
-    w = signal.windows("hann", window_length)
-
-    SFT = signal.ShortTimeFFT()
-
-    fs = 1 / (t[1] - t[0])  # Sampling frequency
-    f, t_stft, stft = signal.stft(
-        x,
-        fs=fs,
-        nperseg=window_length,
-        return_onesided=False,
-    )
-
-    # Convert to power spectral density (similar to MATLAB output)
-    power_density = np.abs(stft) ** 2
-    frequencies = 2 * np.pi * f  # Convert to rad/s to match MATLAB
-
-    # Find dominant frequencies at each time point
-    dominant_freqs = []
-    max_pks = None
-
-    for i in range(len(t_stft)):
-        slice_pd = power_density[:, i]
-        peaks, props = find_peaks(slice_pd, distance=min_peak_distance)
-
-        # Set threshold based on first time point
-        if i == 0:
-            max_pks = np.max(slice_pd[peaks]) if len(peaks) > 0 else 0
-            min_pks = epsilon * max_pks
-
-        # Select dominant peaks
-        dominant_mask = slice_pd[peaks] >= min_pks
-        dominant_peaks = peaks[dominant_mask]
-        dominant_freqs.append(frequencies[dominant_peaks])
-
-        # Optional plotting
-        if plot:
-            plt.figure(figsize=(10, 4))
-            plt.plot(frequencies, slice_pd, "k.-", markersize=5, label="Spectrum")
-            plt.plot(frequencies[peaks], slice_pd[peaks], "ro", label="All peaks")
-            if len(dominant_peaks) > 0:
-                plt.plot(
-                    frequencies[dominant_peaks],
-                    slice_pd[dominant_peaks],
-                    "bo",
-                    label="Dominant peaks",
-                )
-            plt.xlabel("Frequency [rad/s]")
-            plt.ylabel("Power spectral density [1/Hz]")
-            plt.legend()
-            plt.title(f"Time = {t_stft[i]:.2f}s")
-            plt.grid(True)
-            plt.show()
-
-    return stft, frequencies, dominant_freqs
-
-
 def linear_regime(freqs, lim=0.1):
 
     # plot_data([i for i in range(len(freqs))], freqs)
@@ -276,20 +193,26 @@ def linear_regime(freqs, lim=0.1):
     return indices[0]
 
 
-def extract_linear_regime(t, x, lim=0.1):
-    amp, freq, peak_times = pffk(t.squeeze(), x.squeeze())
-    # plot_data(2 * np.pi * freq, amp)
-    idx = linear_regime(freq, lim=5e-9)
-    peak_time = peak_times[idx]
-    if idx > 0:
-        start_idx = np.where(t >= peak_time)[0][0]
-    else:
-        start_idx = 0
-    # print(start_idx)
-    end_index = 2 * start_idx
-    t_trunc = t.copy()[start_idx:end_index]
-    x_trunc = x.copy()[start_idx:end_index]
-    return t_trunc, x_trunc
+def extract_linear_regime(data: SSMDataAttribute, lim=0.1):
+    output = SSMDataAttribute()
+    for i in range(len(data.data)):
+        t = data.time[i]
+        x = data.data[i]
+        amp, freq, peak_times = pffk(t, x)
+        # plot_data(2 * np.pi * freq, amp)
+        idx = linear_regime(freq, lim=5e-9)
+        peak_time = peak_times[idx]
+        if idx > 0:
+            start_idx = np.where(t >= peak_time)[0][0]
+        else:
+            start_idx = 0
+        # TODO why?
+        end_idx = 2 * start_idx
+        t_trunc = t.copy()[start_idx:end_idx].squeeze()
+        x_trunc = x.copy()[:, start_idx:end_idx]
+        output.data.append(x_trunc)
+        output.time.append(t_trunc)
+    return output
 
 
 def plot_data(t, x):
@@ -326,20 +249,55 @@ def scatter(x, y):
     plt.show()
 
 
-def oblique_projection(t, x):
-    t, x = extract_linear_regime(t, x)
-    xData = to_ssmlearn_format([t], [x])
-    # lag = get_optimal_timestep(xData)
-    # lag = 15
-    lag = 1
+def preprocess_for_oblique_projection(
+    data: SSMData, config: Optional[SSMConfig] = None
+) -> tuple[SSMData, CoordinatesEmbeddingConfig]:
+    """
+    Preprocess the data for oblique projection by extracting the linear regime.
+
+    Args:
+        data (SSMData): Input data containing time and signal attributes.
+        config (SSMConfig, optional): Configuration for SSM processing.
+
+    Returns:
+        SSMData: Preprocessed data with linear regime extracted.
+    """
+    if config is None:
+        config = SSMConfig(
+            ssm_dim=2,
+            coordinates_embeddings_args=CoordinatesEmbeddingConfig(over_embedding=1),
+        )
+
+    # Extract linear regime from input signals
+    truncated_data = extract_linear_regime(data.inputs)
+
+    assert config.ssm_dim is not None, "SSM dimension must be specified in the config"
     t, y, _ = coordinates_embedding(
-        [t.ravel()], [x.reshape(1, -1)], imdim=2, shift_steps=lag, over_embedding=1
+        t=truncated_data.time,
+        x=truncated_data.data,
+        imdim=config.ssm_dim,
+        **config.coordinates_embeddings_args.model_dump(),
     )
 
-    t = t[0]
-    y = y[0]
+    processed_data = SSMData(
+        inputs=truncated_data,
+        embedded=SSMDataAttribute(data=y, time=t),
+    )
+
+    return processed_data, config.coordinates_embeddings_args
+
+
+def oblique_projection(data: SSMDataAttribute):
+
+    # TODO what if there is more than one trajectory? DMD fits a linear model so it doesn't make sense
+    # to concatenate trajectories.
+
+    # For now, just taking the first trajectory
+    t = data.time[0]
+    y = data.data[0]
     E = dmd(t, y)
-    B = compute_B_nlopt(t, y, E)
+    P = compute_P_nlopt(t, y, E)
+    return P
 
 
 def dmd(t, y):
@@ -409,7 +367,7 @@ def compute_P(t, y, Q):
     return Q @ np.linalg.solve(B.T @ Q, B.T)
 
 
-def compute_B_nlopt(t, y, Q):
+def compute_P_nlopt(t, y, Q):
 
     ref_var = backbone_var(t, y, return_max=True)
     n = Q.flatten().shape[0]
@@ -455,18 +413,31 @@ def compute_B_nlopt(t, y, Q):
         print(f"Objective value: {opt.last_optimum_value()}")
         print(f"Number of iterations: {opt.get_numevals()}")
 
+    return P
+
 
 def to_ssmlearn_format(t, x):
     return [[_t.reshape(1, -1), _x.reshape(1, -1)] for _t, _x in zip(t, x)]
 
 
 def main():
+    from ssmlearnpy.utils.data import SSMData, SSMDataAttribute
+    from ssmlearnpy.utils.config import SSMConfig, CoordinatesEmbeddingConfig
+
     # test_file = "oblique_data/nonlinear_beam.csv"
-    test_file = "data.csv"
+    test_file = (
+        "/home/patrick/Documents/projects/vtd/VtoD-Backend/SSMLearnPy/tests/data.csv"
+    )
     df = pl.read_csv(test_file, has_header=False)
     t = df.select(pl.nth(0)).to_numpy()
-    x = df.select(pl.nth(1)).to_numpy()
-    oblique_projection(t, x)
+    x = df.select(pl.nth(1)).to_numpy().reshape(1, -1)
+    data = SSMData(inputs=SSMDataAttribute(data=[x], time=[t]))
+    config = SSMConfig(
+        ssm_dim=2,
+        coordinates_embeddings_args=CoordinatesEmbeddingConfig(over_embedding=1),
+    )
+    training_data, _config = preprocess_for_oblique_projection(data, config)
+    P = oblique_projection(training_data.embedded)
 
 
 if __name__ == "__main__":

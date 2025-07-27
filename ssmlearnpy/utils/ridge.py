@@ -419,7 +419,7 @@ def get_fit_ridge_parametric(
     if do_scaling:
         scaler_coefs = mdl.named_steps.scaler.scale_
     else:
-        scaler_coefs = np.ones(map_coefs.shape[1])
+        scaler_coefs = np.ones(map_coefs.shape[0])
 
     map_coefs = mdl.named_steps.ridge_regressor.coef_ / scaler_coefs
     mdl.map_info["coefficients"] = map_coefs
@@ -437,7 +437,7 @@ def fit_reduced_coords_and_parametrization(
     initial_guess=None,
     penalty_linear_cons=1e-5,
     penalty_nonlinear_cons=1e-5,
-    **optimize_kwargs,
+    optimize_kwargs: Optional[dict] = None,
 ):
     """
     X: (n_features, n_samples) or list
@@ -508,7 +508,6 @@ def fit_reduced_coords_and_parametrization(
     if optimize_kwargs is None:
         optimize_kwargs = {
             "method": "lm",
-            "maxfev": 1e5,
             "ftol": 1e-6,
             "gtol": 1e-6,
             "verbose": 0,

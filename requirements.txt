@@ -10,3 +10,4 @@ ipdb
 numba
 polars
 nlopt
+dill
