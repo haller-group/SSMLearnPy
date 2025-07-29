@@ -797,17 +797,23 @@ class SSMLearn:
         self.update(optimal_model)
         return processed_orders, errors
 
-    # TODO add predict method
-    def predict(self, data: SSMData) -> SSMData:
+    def predict(self, data: Optional[SSMData]=None) -> SSMData:
         """
         Assume that only the input data is given, then run through the rest of the pipline.
         """
+        assign_to_self = False
+        if data is None:
+            data = self.data
+            assign_to_self = True
         data = self.embed(data)
         data = self.predict_geometry(data)
         if self.is_oscillatory():
             data = self.predict_polynomial_reduced_dynamics(data)
         else:
             data = self.predict_normalform_reduced_dynamics(data)
+
+        if assign_to_self:
+            self.data = data
 
         return data
 

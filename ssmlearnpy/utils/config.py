@@ -109,7 +109,7 @@ class CoordinatesEmbeddingConfig(BaseModel):
     over_embedding: int = 0
     force_embedding: bool = False
     time_stepping: int = 1
-    shift_steps: int = 1
+    shift_steps: int = None  # If None, it will be calculated automatically
 
 
 class NormalFormConfig(BaseModel):

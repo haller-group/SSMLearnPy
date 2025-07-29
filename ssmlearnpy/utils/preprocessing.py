@@ -216,9 +216,9 @@ def estimate_ssm_dim(data: SSMData):
 
     enduring_freqs = estimate_enduring_frequencies(
         traj[channel],
-        nperseg=len(traj[channel]) // 5,
+        nperseg=min(len(traj[channel]) // 5, 256),
     )
-    return 2*len(enduring_freqs)
+    return max(2*len(enduring_freqs), 2)
 
 
 def estimate_enduring_frequencies(
