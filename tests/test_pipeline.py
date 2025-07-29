@@ -1,6 +1,7 @@
 import numpy as np
 from ssmlearnpy.utils.data import SSMDataAttribute, SSMData
 from ssmlearnpy.main.main import SSMLearn
+from ssmlearnpy.utils.config import SSMConfig
 from copy import deepcopy
 import ipdb
 
@@ -13,8 +14,16 @@ def test_pipeline():
         time=[t],
     )
 
+    # Note that config does not have to be passed to SSMLearn, as it will be created automatically.
+    # We just do it here for the asserts
+    config = SSMConfig()
+
+    assert config.ssm_dim is None, "SSM dimension should be None before fitting"
+    assert config.coordinates_embeddings_args.shift_steps is None, "Shift steps should be None before fitting"
+
     ssm = SSMLearn(
         data = SSMData(inputs=input_data),
+        config=config,
     )
 
     ssm.fit()
