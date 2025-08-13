@@ -130,9 +130,13 @@ class SSMLearn:
             self.data.inputs.data = traj
             self.data.inputs.time = time
 
-        self.preprocess()
-
-        self.embed()
+        # This is useful if you already have the phase space, eg. from the high dimensional output
+        # of a numerical simulation. If starting from a low-dimensional signal, these should not be skipped.
+        if not self.config.bypass_embedding:
+            self.preprocess()
+            self.embed()
+        else:
+            assert self.data.embedded.data, "If skipping time delay embedding, you must provide full phase space data in data.embedded.data."
 
     @staticmethod
     def import_data(path) -> tuple[LArr, LArr]:

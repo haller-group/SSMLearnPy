@@ -50,7 +50,7 @@ def coordinates_embedding(
     y: LArr = []
 
     # Construct embedding coordinate system
-    if n_n > 1 and force_embedding != 1:
+    if n_n > 1 and not force_embedding:
         p = n_n * n_observables
         # Augment embdedding dimension with time delays
         if n_observables == 1:

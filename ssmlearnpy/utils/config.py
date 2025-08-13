@@ -109,7 +109,7 @@ class CoordinatesEmbeddingConfig(BaseModel):
     over_embedding: int = 0
     force_embedding: bool = False
     time_stepping: int = 1
-    shift_steps: int = None  # If None, it will be calculated automatically
+    shift_steps: Optional[int] = None  # If None, it will be calculated automatically
 
 
 class NormalFormConfig(BaseModel):
@@ -142,3 +142,4 @@ class SSMConfig(BaseModel):
     normalform_args: NormalFormConfig = NormalFormConfig()
     # Optional, because if not provided we will try to deduce it
     ssm_dim: Optional[int] = None
+    bypass_embedding: bool = False
