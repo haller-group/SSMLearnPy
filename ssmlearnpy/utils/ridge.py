@@ -2,7 +2,6 @@ import logging
 
 
 import numpy as np
-from numpy.lib.arraysetops import isin
 from sklearn.preprocessing import StandardScaler
 from sklearn.preprocessing import PolynomialFeatures, FunctionTransformer
 from sklearn.gaussian_process.kernels import Kernel
