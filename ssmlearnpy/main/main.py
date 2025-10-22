@@ -1,58 +1,54 @@
 import logging
+import time
+from copy import deepcopy
 from dataclasses import dataclass, field
-import numpy as np
-import dill
+from pathlib import Path
+from typing import Dict, List, Literal, Optional, Union
 
+import dill
+import numpy as np
+from scipy.integrate import solve_ivp
+from scipy.optimize import least_squares
+from sklearn.pipeline import Pipeline
+
+import ssmlearnpy.reduced_dynamics.normalform as normalform
+from ssmlearnpy import LArr
 from ssmlearnpy.geometry.coordinates_embedding import coordinates_embedding
 from ssmlearnpy.geometry.dimensionality_reduction import (
-    reduce_dimensions,
-    LinearChart,
     BasicReducer,
+    LinearChart,
+    reduce_dimensions,
 )
-from ssmlearnpy import LArr
-from ssmlearnpy.geometry.encode_decode import decode_geometry
-from ssmlearnpy.geometry.encode_decode import encode_geometry
+from ssmlearnpy.geometry.encode_decode import decode_geometry, encode_geometry
 from ssmlearnpy.geometry.oblique_projection import *
-
-from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
 from ssmlearnpy.reduced_dynamics.advector import advect
 from ssmlearnpy.reduced_dynamics.normalform import (
     Dynamics,
     NonlinearCoordinateTransform,
 )
-
+from ssmlearnpy.reduced_dynamics.shift_or_differentiate import shift_or_differentiate
 from ssmlearnpy.utils.compute_errors import compute_errors
-from ssmlearnpy.utils.ridge import (
-    get_fit_ridge,
-    fit_reduced_coords_and_parametrization,
-    get_fit_ridge_parametric,
-    Decoder,
-)
-from ssmlearnpy.utils.ridge import get_matrix
-from ssmlearnpy.utils.file_handler import get_vectors
-from ssmlearnpy.utils.plots import compute_surface
-from ssmlearnpy.utils.data import SSMData, SSMDataAttribute, prev_attribute_map
 from ssmlearnpy.utils.config import (
     BaseRegressionConfig,
     GeometryRegressionConfig,
-    SSMConfig,
     NormalFormConfig,
     RidgeRegressionConfig,
+    SSMConfig,
 )
+from ssmlearnpy.utils.data import SSMData
+from ssmlearnpy.utils.file_handler import get_vectors
+from ssmlearnpy.utils.plots import compute_surface
 from ssmlearnpy.utils.preprocessing import (
     estimate_ssm_dim,
     get_optimal_timestep,
 )
-import ssmlearnpy.reduced_dynamics.normalform as normalform
-from scipy.optimize import minimize, least_squares
-from scipy.integrate import solve_ivp
-from sklearn.pipeline import Pipeline
-from copy import deepcopy
-from typing import Literal, Optional, Union, Dict, List
-from time import time
-from pathlib import Path
-import ipdb
-
+from ssmlearnpy.utils.ridge import (
+    Decoder,
+    fit_reduced_coords_and_parametrization,
+    get_fit_ridge,
+    get_fit_ridge_parametric,
+    get_matrix,
+)
 
 LOGGER = logging.getLogger("SSMLearn")
 
@@ -121,9 +117,9 @@ class SSMLearn:
         If no SSMData object is passed, the class will initialize a new SSMData object and embed it via time-delay.
         """
 
-        assert (not self.data.inputs.empty()) ^ bool(
-            self.data_path
-        ), "Please pass input data via either the SSMData class or a path to the data file."
+        assert (not self.data.inputs.empty()) ^ bool(self.data_path), (
+            "Please pass input data via either the SSMData class or a path to the data file."
+        )
 
         if self.data.inputs.empty():
             traj, time = self.import_data(self.data_path)
@@ -136,7 +132,9 @@ class SSMLearn:
             self.preprocess()
             self.embed()
         else:
-            assert self.data.embedded.data, "If skipping time delay embedding, you must provide full phase space data in data.embedded.data."
+            assert self.data.embedded.data, (
+                "If skipping time delay embedding, you must provide full phase space data in data.embedded.data."
+            )
 
     @staticmethod
     def import_data(path) -> tuple[LArr, LArr]:
@@ -160,13 +158,13 @@ class SSMLearn:
             data = self.data
             assign_to_self = True
         data = self.data if data is None else data
-        assert (
-            len(data.inputs.data) > 0
-        ), "No input data found. Please provide input data."
+        assert len(data.inputs.data) > 0, (
+            "No input data found. Please provide input data."
+        )
 
-        assert (
-            self.config.ssm_dim is not None
-        ), "SSM dimension is not set. Please set it in the config or run preprocess() to estimate it."
+        assert self.config.ssm_dim is not None, (
+            "SSM dimension is not set. Please set it in the config or run preprocess() to estimate it."
+        )
         t, embed, _ = coordinates_embedding(
             data.inputs.time,
             data.inputs.data,
@@ -188,7 +186,6 @@ class SSMLearn:
             BaseRegressionConfig, RidgeRegressionConfig, GeometryRegressionConfig
         ] = BaseRegressionConfig(),
     ) -> None:
-
         if method == "linearchart":
             # This method ensures that the linear chart used for projection is also
             # used by the encoder
@@ -198,9 +195,9 @@ class SSMLearn:
                     regression_args
                 )
 
-            assert isinstance(
-                regression_args, GeometryRegressionConfig
-            ), "regression_args must be of type GeometryRegressionConfig when using LinearChart"
+            assert isinstance(regression_args, GeometryRegressionConfig), (
+                "regression_args must be of type GeometryRegressionConfig when using LinearChart"
+            )
 
             self.encoder, self.decoder = fit_reduced_coords_and_parametrization(
                 self.data.embedded.data,
@@ -208,15 +205,14 @@ class SSMLearn:
                 **regression_args.model_dump(),
             )
         else:
-
             if isinstance(regression_args, BaseRegressionConfig):
                 regression_args = RidgeRegressionConfig.from_shared_args(
                     regression_args
                 )
 
-            assert isinstance(
-                regression_args, RidgeRegressionConfig
-            ), "regression_args must be of type RidgeRegressionConfig when using BasicReducer or ObliqueProjection"
+            assert isinstance(regression_args, RidgeRegressionConfig), (
+                "regression_args must be of type RidgeRegressionConfig when using BasicReducer or ObliqueProjection"
+            )
 
             self.fit_encoder(method=method)
             self.fit_decoder(regression_args)
@@ -281,9 +277,9 @@ class SSMLearn:
         """wrapper for encoder.predict. Expects a trajectory of shape (n_features, n_samples)
         returns the reduced coordinates of shape (n_dim, n_samples)
         """
-        assert (
-            self.encoder is not None
-        ), "Encoder not fitted. Please call fit_encoder() first."
+        assert self.encoder is not None, (
+            "Encoder not fitted. Please call fit_encoder() first."
+        )
         if isinstance(x, list):
             return [self.encoder.predict(_x) for _x in x]
         elif isinstance(x, np.ndarray):
@@ -293,9 +289,9 @@ class SSMLearn:
         """wrapper for decoder.predict. Expects a reduced trajectory of shape (n_dim, n_samples)
         returns the full trajectory of shape (n_features, n_samples)
         """
-        assert (
-            self.decoder is not None
-        ), "Decoder not fitted. Please call get_parametrization() first."
+        assert self.decoder is not None, (
+            "Decoder not fitted. Please call get_parametrization() first."
+        )
         if isinstance(y, list):
             return [self.decoder.predict(_y.T).T for _y in y]
         elif isinstance(y, np.ndarray):
@@ -308,14 +304,13 @@ class SSMLearn:
         surf_margin=10,
         mesh_step=100,
     ) -> Dict:
-
         x_data = get_matrix(self.data.reduced_coordinates.data)
         if self.config.ssm_dim == 2:
             U, _, _ = np.linalg.svd(x_data, full_matrices=True)
             max_vals = (1 + surf_margin / 100) * np.amax(np.matmul(U.T, x_data), axis=1)
             transf_mesh_generation = np.matmul(U, np.diag(max_vals))
         else:
-            raise NotImplementedError((f"Not implemented."))
+            raise NotImplementedError(("Not implemented."))
 
         surface_dict = compute_surface(
             surface_function=self.decode,
@@ -382,14 +377,13 @@ class SSMLearn:
         if (
             self.config.dynamics_structure == "normalform" and self.is_oscillatory()
         ):  # compute the normal form transformation after an initial guess has been computed
-
             if normalform_args is not None:
                 self.config.normalform_args = normalform_args
 
             ndofs = int(self.linear_part.shape[0] / 2)
             if self.config.ssm_dim % 2 != 0:
                 raise NotImplementedError(
-                    (f"Normal form transformation not implemented for odd dimensions.")
+                    ("Normal form transformation not implemented for odd dimensions.")
                 )
             (
                 nf_object,
@@ -474,7 +468,6 @@ class SSMLearn:
         self,
         data: Optional[SSMData] = None,
     ) -> SSMData:
-
         assign_to_self = False
         if data is None:
             data = self.data
@@ -506,7 +499,6 @@ class SSMLearn:
         self,
         data: Optional[SSMData] = None,
     ) -> SSMData:
-
         assign_to_self = False
         if data is None:
             data = self.data
@@ -524,7 +516,6 @@ class SSMLearn:
             data.normal_coordinates.data,
         ):
             try:
-
                 data.advected_normal_coordinates.data.append(
                     solve_ivp(
                         self.reduced_dynamics.map_info["vectorfield"],
@@ -536,7 +527,7 @@ class SSMLearn:
                 )
                 data.advected_normal_coordinates.time.append(t)
             except Exception as e:
-                LOGGER.warning(f"Integration failed when advecting trajectory")
+                LOGGER.warning("Integration failed when advecting trajectory")
                 raise (e)
 
         data.advected_normal_coordinates.reconstructed_prev = [
@@ -559,7 +550,6 @@ class SSMLearn:
     def predict_polynomial_reduced_dynamics(
         self, data: Optional[SSMData] = None
     ) -> SSMData:
-
         assign_to_self = False
         if data is None:
             data = self.data
@@ -610,6 +600,7 @@ class SSMLearn:
         self.data = None
         _ssm = deepcopy(self)
         _config = deepcopy(self.config)
+        _data = deepcopy(_data)
         _config.dynamics_structure = "normalform"
         _config.error_metric = "NMTE"
 
@@ -622,79 +613,37 @@ class SSMLearn:
             self.config.dynamics_polynomial_range[1] + 1,
         ):
             LOGGER.info(f"Fitting normal form dynamics for order {order}")
-            start_time = time()
+            start_time = time.time()
             _config.normalform_args.degree = order
             _ssm.data = _data
             _ssm.config = _config
 
-            _ssm.fit_reduced_dynamics()
-
             try:
+                _ssm.fit_reduced_dynamics()
                 _ssm.predict_normalform_reduced_dynamics()
+                errors.append(
+                    np.mean(
+                        compute_errors(
+                            reference=_ssm.data.embedded.data,
+                            prediction=_ssm.data.advected_normal_coordinates.reconstructed_embedding,
+                            metric=_ssm.config.error_metric,
+                        )
+                    )
+                )
             except Exception as e:
                 LOGGER.warning(
                     f"Normal form dynamics optimisation for order {order} failed with error: {e}"
                 )
                 continue
 
-            # _ssm.data.normal_coordinates.data = (
-            #     _ssm.normalform_transformation.inverse_transform(
-            #         _ssm.data.reduced_coordinates.data
-            #     )
-            # )
-
-            # error_processing_traj = False
-            # _ssm.data.advected_normal_coordinates.data = []
-            # for t, normal_form in zip(
-            #     _ssm.data.embedded.time,
-            #     _ssm.data.normal_coordinates.data,
-            # ):
-            #     try:
-            #         if error_processing_traj:
-            #             break
-
-            #         _ssm.data.advected_normal_coordinates.data.append(
-            #             solve_ivp(
-            #                 _ssm.reduced_dynamics.map_info["vectorfield"],
-            #                 [t[0], t[-1]],
-            #                 normal_form[:, 0],
-            #                 t_eval=t,
-            #                 method="DOP853",
-            #             ).y
-            #         )
-            #     except Exception as e:
-            #         LOGGER.warning(
-            #             f"Normal form dynamics optimisation for order {order} failed with error: {e}"
-            #         )
-            #         error_processing_traj = True
-
-            # if error_processing_traj:
-            #     continue
-
-            # _ssm.data.advected_normal_coordinates.reconstructed_prev = [
-            #     traj.real
-            #     for traj in _ssm.normalform_transformation.transform(
-            #         _ssm.data.advected_normal_coordinates.data
-            #     )
-            # ]
-
-            # _ssm.data.advected_normal_coordinates.reconstructed_embedding = _ssm.decode(
-            #     _ssm.data.advected_normal_coordinates.reconstructed_prev
-            # )
-
-            errors.append(
-                np.mean(
-                    compute_errors(
-                        reference=_ssm.data.embedded.data,
-                        prediction=_ssm.data.advected_normal_coordinates.reconstructed_embedding,
-                        metric=_ssm.config.error_metric,
-                    )
-                )
+            _ssm.save(
+                path=Path(_config.save_directory) / str(order) / "model.dill",
+                include_data=_config.save_suboptimal_model_data_obj,
             )
             models.append(_ssm)
             processed_orders.append(order)
             LOGGER.info(
-                f"Normal form optimisation for order {order} completed in {time() - start_time} seconds "
+                f"Normal form optimisation for order {order} completed in {time.time() - start_time} seconds "
                 f"with mean relative error {errors[-1]}"
             )
 
@@ -718,14 +667,18 @@ class SSMLearn:
         optimal_model = models[index]
         optimal_model.config = self.config
         self.update(optimal_model)
-        return processed_orders, errors
+        return {
+            "orders": processed_orders,
+            "errors": errors,
+            "selected_order": processed_orders[index],
+        }
 
     def fit_optimal_polynomial(self, data: Optional[SSMData] = None):
-
         _data = self.data if data is None else data
         self.data = None
         _ssm = deepcopy(self)
         _config = deepcopy(self.config)
+        _data = deepcopy(_data)
         _config.dynamics_structure = "generic"
         _config.error_metric = "NMTE"
 
@@ -737,7 +690,7 @@ class SSMLearn:
             self.config.dynamics_polynomial_range[0],
             self.config.dynamics_polynomial_range[1] + 1,
         ):
-            start_time = time()
+            start_time = time.time()
             _config.dynamics_poly_degree = order
             _ssm.data = _data
             _ssm.config = _config
@@ -749,31 +702,34 @@ class SSMLearn:
                     ),
                 )
                 _ssm.predict_polynomial_reduced_dynamics()
+                _ssm.data.advected_reduced_coordinates.reconstructed_embedding = (
+                    _ssm.decode(_ssm.data.advected_reduced_coordinates.data)
+                )
+
+                errors.append(
+                    np.mean(
+                        compute_errors(
+                            reference=_ssm.data.embedded.data,
+                            prediction=_ssm.data.advected_reduced_coordinates.reconstructed_embedding,
+                            metric=_ssm.config.error_metric,
+                        )
+                    )
+                )
             except Exception as e:
                 LOGGER.warning(
                     f"Polynomial dynamics optimisation for order {order} failed with error: {e}"
                 )
                 continue
 
-            _ssm.data.advected_reduced_coordinates.reconstructed_embedding = (
-                _ssm.decode(_ssm.data.advected_reduced_coordinates.data)
+            _ssm.save(
+                path=Path(_config.save_directory) / str(order) / "model.dill",
+                include_data=_config.save_suboptimal_model_data_obj,
             )
-
-            errors.append(
-                np.mean(
-                    compute_errors(
-                        reference=_ssm.data.embedded.data,
-                        prediction=_ssm.data.advected_reduced_coordinates.reconstructed_embedding,
-                        metric=_ssm.config.error_metric,
-                    )
-                )
-            )
-
             models.append(_ssm)
             processed_orders.append(order)
 
             LOGGER.info(
-                f"Polynomial dynamics optimisation for order {order} completed in {time() - start_time} seconds "
+                f"Polynomial dynamics optimisation for order {order} completed in {time.time() - start_time} seconds "
                 f"with mean relative error {errors[-1]}"
             )
 
@@ -799,9 +755,13 @@ class SSMLearn:
         optimal_model = models[index]
         optimal_model.config = self.config
         self.update(optimal_model)
-        return processed_orders, errors
+        return {
+            "orders": processed_orders,
+            "errors": errors,
+            "selected_order": processed_orders[index],
+        }
 
-    def predict(self, data: Optional[SSMData]=None) -> SSMData:
+    def predict(self, data: Optional[SSMData] = None) -> SSMData:
         """
         Assume that only the input data is given, then run through the rest of the pipline.
         """
@@ -861,19 +821,21 @@ class SSMLearn:
         self.data = None
         return self
 
-    def save(self, path: Path, model_only=True):
+    def save(self, path: Path, include_data=False):
         """
         Save the SSMLearn object to a file.
-        If model_only is True, only the model is saved, otherwise the data is also saved.
+        If include_data is True, the data is also saved.
         """
-        if model_only:
+        if not include_data:
             data = self.data
             self.data = None
+
+        path.parent.mkdir(parents=True, exist_ok=True)
 
         with open(path, "wb") as f:
             dill.dump(self, f)
 
-        if model_only:
+        if not include_data:
             self.data = data
 
     @staticmethod

@@ -1,6 +1,7 @@
-from pydantic import BaseModel
-from typing import Literal, Optional, Dict, Tuple
+from typing import Dict, Literal, Optional, Tuple
+
 from numpy import ndarray
+from pydantic import BaseModel
 
 
 class BaseRegressionConfig(BaseModel):
@@ -136,6 +137,7 @@ class SSMConfig(BaseModel):
     save_directory: str = ""
     dynamics_polynomial_range: Tuple[int, int] = (3, 7)
     save_suboptimal_models: bool = False
+    save_suboptimal_model_data_obj: bool = False
     coordinates_embeddings_args: CoordinatesEmbeddingConfig = (
         CoordinatesEmbeddingConfig()
     )

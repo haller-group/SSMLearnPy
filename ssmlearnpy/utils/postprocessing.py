@@ -1,9 +1,8 @@
-import sympy as sy
 import numpy as np
-
-from sympy import latex
+import sympy as sy
 from IPython.display import display_latex
 from scipy.optimize import minimize
+from sympy import latex
 
 from ssmlearnpy.utils.preprocessing import insert_complex_conjugate
 
@@ -40,7 +39,7 @@ def display_equation(coeffs, power, base_symbol="x", complex=False, latex_format
             prod = 1
             for i, p_ in enumerate(p):
                 prod *= variables[i] ** p_
-            term += coeffs[0, l] * prod
+            term += coeffs[k, l] * prod
         equations.append(term)
     if (
         complex and n_equations < n_variables
@@ -124,9 +123,7 @@ def convert_to_polar(variables, equations):
         )  # dot z * exp(-i \varphi)/2 + dot \bar{z} * exp(i \varphi)/2
         phi_eq_temps = z_dot * sy.exp(-ii * phi_var) / (2 * ii) - zbar_dot * sy.exp(
             ii * phi_var
-        ) / (
-            2 * ii
-        )  # dot z * exp(-i \varphi)/(2i) - dot \bar{z} * exp(i \varphi)/(2i)
+        ) / (2 * ii)  # dot z * exp(-i \varphi)/(2i) - dot \bar{z} * exp(i \varphi)/(2i)
         phi_equations.append(phi_eq_temps / (r_var))
     r_equations = [sy.simplify(r) for r in r_equations]
     phi_equations = [sy.simplify(p) for p in phi_equations]
